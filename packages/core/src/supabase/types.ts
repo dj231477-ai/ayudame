@@ -1,12 +1,769 @@
 // =============================================================================
 // Supabase database types  [SPEC §C-5.2, §C-7]
-// Refleja el esquema de packages/db. Regenerar con:
-//   supabase gen types typescript --linked > packages/core/src/supabase/types.ts
-// Mantenido a mano hasta que exista un proyecto Supabase vinculado.
+// Generado con: npx supabase gen types typescript --project-id qgwgzbvfarimbgoyskkd
+// Última regeneración: 2026-06-16 (MCP claude.ai Supabase)
 // =============================================================================
 
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[]
 
+export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
+  public: {
+    Tables: {
+      ai_daily_usage: {
+        Row: {
+          date: string
+          provider: string
+          request_count: number
+          token_count: number
+        }
+        Insert: {
+          date?: string
+          provider: string
+          request_count?: number
+          token_count?: number
+        }
+        Update: {
+          date?: string
+          provider?: string
+          request_count?: number
+          token_count?: number
+        }
+        Relationships: []
+      }
+      blocks: {
+        Row: {
+          created_at: string
+          date: string
+          end_time: string
+          id: string
+          label: string
+          start_time: string
+          status: string
+          task_id: string | null
+          type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          date: string
+          end_time: string
+          id?: string
+          label: string
+          start_time?: string
+          status?: string
+          task_id?: string | null
+          type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          date?: string
+          end_time?: string
+          id?: string
+          label?: string
+          start_time?: string
+          status?: string
+          task_id?: string | null
+          type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "blocks_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      challenge_members: {
+        Row: {
+          challenge_id: string
+          joined_at: string
+          user_id: string
+        }
+        Insert: {
+          challenge_id: string
+          joined_at?: string
+          user_id: string
+        }
+        Update: {
+          challenge_id?: string
+          joined_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "challenge_members_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: false
+            referencedRelation: "challenges"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "challenge_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      challenges: {
+        Row: {
+          created_at: string
+          end_date: string
+          id: string
+          name: string
+          owner_id: string
+          start_date: string
+        }
+        Insert: {
+          created_at?: string
+          end_date: string
+          id?: string
+          name: string
+          owner_id: string
+          start_date: string
+        }
+        Update: {
+          created_at?: string
+          end_date?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          start_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "challenges_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credit_purchases: {
+        Row: {
+          amount_usd: number
+          created_at: string
+          credits_added: number
+          id: string
+          package: string
+          status: string
+          stripe_payment_id: string | null
+          user_id: string
+        }
+        Insert: {
+          amount_usd: number
+          created_at?: string
+          credits_added: number
+          id?: string
+          package: string
+          status?: string
+          stripe_payment_id?: string | null
+          user_id: string
+        }
+        Update: {
+          amount_usd?: number
+          created_at?: string
+          credits_added?: number
+          id?: string
+          package?: string
+          status?: string
+          stripe_payment_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credit_purchases_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credits: {
+        Row: {
+          balance: number
+          total_purchased: number
+          total_spent: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          balance?: number
+          total_purchased?: number
+          total_spent?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          balance?: number
+          total_purchased?: number
+          total_spent?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credits_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      evidence: {
+        Row: {
+          block_id: string
+          confidence: number | null
+          created_at: string
+          id: string
+          photo_path: string
+          provider: string | null
+          usage_log_id: string | null
+          user_id: string
+          verification_msg: string | null
+          verified: boolean
+        }
+        Insert: {
+          block_id: string
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          photo_path: string
+          provider?: string | null
+          usage_log_id?: string | null
+          user_id: string
+          verification_msg?: string | null
+          verified?: boolean
+        }
+        Update: {
+          block_id?: string
+          confidence?: number | null
+          created_at?: string
+          id?: string
+          photo_path?: string
+          provider?: string | null
+          usage_log_id?: string | null
+          user_id?: string
+          verification_msg?: string | null
+          verified?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_block_id_fkey"
+            columns: ["block_id"]
+            isOneToOne: false
+            referencedRelation: "blocks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_usage_log_id_fkey"
+            columns: ["usage_log_id"]
+            isOneToOne: false
+            referencedRelation: "usage_log"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      feature_flags: {
+        Row: {
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
+      habits: {
+        Row: {
+          completed: boolean
+          completed_at: string | null
+          date: string
+          habit_key: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          completed?: boolean
+          completed_at?: string | null
+          date: string
+          habit_key: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          completed?: boolean
+          completed_at?: string | null
+          date?: string
+          habit_key?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "habits_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      monetization_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          payload: Json | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          payload?: Json | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          payload?: Json | null
+        }
+        Relationships: []
+      }
+      processed_events: {
+        Row: {
+          event_id: string
+          processed_at: string
+          source: string
+        }
+        Insert: {
+          event_id: string
+          processed_at?: string
+          source: string
+        }
+        Update: {
+          event_id?: string
+          processed_at?: string
+          source?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          full_name: string | null
+          handle: string | null
+          id: string
+          locale: string
+          plan: string
+          streak: number
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          full_name?: string | null
+          handle?: string | null
+          id: string
+          locale?: string
+          plan?: string
+          streak?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          full_name?: string | null
+          handle?: string | null
+          id?: string
+          locale?: string
+          plan?: string
+          streak?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          id: string
+          p256dh: string
+          user_agent: string | null
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          id?: string
+          p256dh: string
+          user_agent?: string | null
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          id?: string
+          p256dh?: string
+          user_agent?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subscriptions: {
+        Row: {
+          created_at: string
+          current_period_end: string | null
+          plan: string
+          seats: number
+          status: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_period_end?: string | null
+          plan?: string
+          seats?: number
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          current_period_end?: string | null
+          plan?: string
+          seats?: number
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscriptions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      usage_log: {
+        Row: {
+          action: string
+          cost_charged: number
+          cost_real: number
+          created_at: string
+          id: string
+          margin: number
+          metadata: Json | null
+          model: string | null
+          provider: string
+          refunded: boolean
+          user_id: string
+        }
+        Insert: {
+          action: string
+          cost_charged: number
+          cost_real: number
+          created_at?: string
+          id?: string
+          margin: number
+          metadata?: Json | null
+          model?: string | null
+          provider: string
+          refunded?: boolean
+          user_id: string
+        }
+        Update: {
+          action?: string
+          cost_charged?: number
+          cost_real?: number
+          created_at?: string
+          id?: string
+          margin?: number
+          metadata?: Json | null
+          model?: string | null
+          provider?: string
+          refunded?: boolean
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usage_log_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      verification_queue: {
+        Row: {
+          block_id: string
+          created_at: string
+          id: string
+          photo_path: string
+          user_id: string
+        }
+        Insert: {
+          block_id: string
+          created_at?: string
+          id?: string
+          photo_path: string
+          user_id: string
+        }
+        Update: {
+          block_id?: string
+          created_at?: string
+          id?: string
+          photo_path?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verification_queue_block_id_fkey"
+            columns: ["block_id"]
+            isOneToOne: false
+            referencedRelation: "blocks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verification_queue_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+    }
+    Views: {
+      public_profiles: {
+        Row: {
+          full_name: string | null
+          handle: string | null
+          streak: number | null
+        }
+        Insert: {
+          full_name?: string | null
+          handle?: string | null
+          streak?: number | null
+        }
+        Update: {
+          full_name?: string | null
+          handle?: string | null
+          streak?: number | null
+        }
+        Relationships: []
+      }
+    }
+    Functions: {
+      add_credits: {
+        Args: { p_amount: number; p_user_id: string }
+        Returns: undefined
+      }
+      deduct_credits: {
+        Args: { p_amount: number; p_user_id: string }
+        Returns: number
+      }
+      get_platform_metrics: { Args: Record<PropertyKey, never>; Returns: Json }
+      increment_ai_usage: {
+        Args: { p_provider: string; p_tokens: number }
+        Returns: undefined
+      }
+      refund_credits: {
+        Args: { p_amount: number; p_usage_log_id: string; p_user_id: string }
+        Returns: undefined
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+}
+
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {},
+  },
+} as const
+
+// Aliases de dominio [SPEC §C-5.2] — mantenidos a mano (la DB usa string genérico).
 export type Plan = 'free' | 'pro' | 'team';
 export type SubscriptionStatus = 'active' | 'past_due' | 'canceled' | 'trialing';
 export type BlockType = 'deep' | 'admin' | 'body' | 'rest' | 'review';
@@ -19,322 +776,3 @@ export type UsageAction =
   | 'weekly_analysis'
   | 'embedding';
 export type PurchaseStatus = 'pending' | 'completed' | 'refunded';
-
-export interface Database {
-  public: {
-    Tables: {
-      profiles: {
-        Row: {
-          id: string;
-          full_name: string | null;
-          handle: string | null;
-          plan: Plan;
-          streak: number;
-          timezone: string;
-          locale: string;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id: string;
-          full_name?: string | null;
-          handle?: string | null;
-          plan?: Plan;
-          streak?: number;
-          timezone?: string;
-          locale?: string;
-        };
-        Update: Partial<Database['public']['Tables']['profiles']['Insert']>;
-        Relationships: [];
-      };
-      credits: {
-        Row: {
-          user_id: string;
-          balance: number;
-          total_purchased: number;
-          total_spent: number;
-          updated_at: string;
-        };
-        Insert: { user_id: string; balance?: number; total_purchased?: number; total_spent?: number };
-        Update: Partial<Database['public']['Tables']['credits']['Insert']>;
-        Relationships: [];
-      };
-      usage_log: {
-        Row: {
-          id: string;
-          user_id: string;
-          action: UsageAction;
-          provider: AIProviderName;
-          model: string | null;
-          cost_real: number;
-          cost_charged: number;
-          margin: number;
-          refunded: boolean;
-          metadata: Json | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          action: UsageAction;
-          provider: AIProviderName;
-          model?: string | null;
-          cost_real: number;
-          cost_charged: number;
-          margin: number;
-          refunded?: boolean;
-          metadata?: Json | null;
-        };
-        Update: Partial<Database['public']['Tables']['usage_log']['Insert']>;
-        Relationships: [];
-      };
-      credit_purchases: {
-        Row: {
-          id: string;
-          user_id: string;
-          package: string;
-          amount_usd: number;
-          credits_added: number;
-          stripe_payment_id: string | null;
-          status: PurchaseStatus;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          package: string;
-          amount_usd: number;
-          credits_added: number;
-          stripe_payment_id?: string | null;
-          status?: PurchaseStatus;
-        };
-        Update: Partial<Database['public']['Tables']['credit_purchases']['Insert']>;
-        Relationships: [];
-      };
-      push_subscriptions: {
-        Row: {
-          id: string;
-          user_id: string;
-          endpoint: string;
-          p256dh: string;
-          auth: string;
-          user_agent: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          endpoint: string;
-          p256dh: string;
-          auth: string;
-          user_agent?: string | null;
-        };
-        Update: Partial<Database['public']['Tables']['push_subscriptions']['Insert']>;
-        Relationships: [];
-      };
-      ai_daily_usage: {
-        Row: { provider: string; date: string; request_count: number; token_count: number };
-        Insert: { provider: string; date?: string; request_count?: number; token_count?: number };
-        Update: Partial<Database['public']['Tables']['ai_daily_usage']['Insert']>;
-        Relationships: [];
-      };
-      monetization_events: {
-        Row: { id: string; event_type: string; payload: Json | null; created_at: string };
-        Insert: { id?: string; event_type: string; payload?: Json | null };
-        Update: Partial<Database['public']['Tables']['monetization_events']['Insert']>;
-        Relationships: [];
-      };
-      feature_flags: {
-        Row: { key: string; value: Json; updated_at: string };
-        Insert: { key: string; value: Json };
-        Update: Partial<Database['public']['Tables']['feature_flags']['Insert']>;
-        Relationships: [];
-      };
-      subscriptions: {
-        Row: {
-          user_id: string;
-          plan: Plan;
-          status: SubscriptionStatus;
-          stripe_customer_id: string | null;
-          stripe_subscription_id: string | null;
-          seats: number;
-          current_period_end: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          user_id: string;
-          plan?: Plan;
-          status?: SubscriptionStatus;
-          stripe_customer_id?: string | null;
-          stripe_subscription_id?: string | null;
-          seats?: number;
-          current_period_end?: string | null;
-        };
-        Update: Partial<Database['public']['Tables']['subscriptions']['Insert']>;
-        Relationships: [];
-      };
-      processed_events: {
-        Row: { event_id: string; source: string; processed_at: string };
-        Insert: { event_id: string; source: string };
-        Update: Partial<Database['public']['Tables']['processed_events']['Insert']>;
-        Relationships: [];
-      };
-      blocks: {
-        Row: {
-          id: string;
-          user_id: string;
-          date: string;
-          start_time: string;
-          end_time: string;
-          label: string;
-          type: BlockType;
-          task_id: string | null;
-          status: BlockStatus;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          date: string;
-          start_time: string;
-          end_time: string;
-          label: string;
-          type: BlockType;
-          task_id?: string | null;
-          status?: BlockStatus;
-        };
-        Update: Partial<Database['public']['Tables']['blocks']['Insert']>;
-        Relationships: [];
-      };
-      evidence: {
-        Row: {
-          id: string;
-          block_id: string;
-          user_id: string;
-          photo_path: string;
-          verified: boolean;
-          confidence: number | null;
-          verification_msg: string | null;
-          provider: string | null;
-          usage_log_id: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          block_id: string;
-          user_id: string;
-          photo_path: string;
-          verified?: boolean;
-          confidence?: number | null;
-          verification_msg?: string | null;
-          provider?: string | null;
-          usage_log_id?: string | null;
-        };
-        Update: Partial<Database['public']['Tables']['evidence']['Insert']>;
-        Relationships: [];
-      };
-      habits: {
-        Row: {
-          id: string;
-          user_id: string;
-          date: string;
-          habit_key: string;
-          completed: boolean;
-          completed_at: string | null;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          date: string;
-          habit_key: string;
-          completed?: boolean;
-          completed_at?: string | null;
-        };
-        Update: Partial<Database['public']['Tables']['habits']['Insert']>;
-        Relationships: [];
-      };
-      challenges: {
-        Row: {
-          id: string;
-          owner_id: string;
-          name: string;
-          start_date: string;
-          end_date: string;
-          created_at: string;
-        };
-        Insert: { id?: string; owner_id: string; name: string; start_date: string; end_date: string };
-        Update: Partial<Database['public']['Tables']['challenges']['Insert']>;
-        Relationships: [];
-      };
-      challenge_members: {
-        Row: { challenge_id: string; user_id: string; joined_at: string };
-        Insert: { challenge_id: string; user_id: string };
-        Update: Partial<Database['public']['Tables']['challenge_members']['Insert']>;
-        Relationships: [];
-      };
-      verification_queue: {
-        Row: {
-          id: string;
-          user_id: string;
-          block_id: string;
-          photo_path: string;
-          status: string;
-          attempts: number;
-          last_error: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          block_id: string;
-          photo_path: string;
-          status?: string;
-          attempts?: number;
-          last_error?: string | null;
-        };
-        Update: Partial<Database['public']['Tables']['verification_queue']['Insert']>;
-        Relationships: [];
-      };
-      google_tokens: {
-        Row: {
-          user_id: string;
-          refresh_token: string;
-          access_token: string | null;
-          expiry: string | null;
-          scope: string | null;
-          updated_at: string;
-        };
-        Insert: {
-          user_id: string;
-          refresh_token: string;
-          access_token?: string | null;
-          expiry?: string | null;
-          scope?: string | null;
-        };
-        Update: Partial<Database['public']['Tables']['google_tokens']['Insert']>;
-        Relationships: [];
-      };
-    };
-    Views: {
-      public_profiles: {
-        Row: { handle: string | null; full_name: string | null; streak: number | null };
-      };
-    };
-    Functions: {
-      deduct_credits: { Args: { p_user_id: string; p_amount: number }; Returns: number };
-      refund_credits: {
-        Args: { p_user_id: string; p_amount: number; p_usage_log_id: string | null };
-        Returns: undefined;
-      };
-      add_credits: { Args: { p_user_id: string; p_amount: number }; Returns: undefined };
-      grant_signup_stipend: { Args: { p_user_id: string; p_amount: number }; Returns: number };
-      increment_ai_usage: { Args: { p_provider: string; p_tokens: number }; Returns: undefined };
-      get_platform_metrics: { Args: Record<string, never>; Returns: Json };
-    };
-    Enums: { [_ in never]: never };
-    CompositeTypes: { [_ in never]: never };
-  };
-}
