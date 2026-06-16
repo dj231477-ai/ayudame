@@ -1,6 +1,7 @@
 // Gemini — visión (primario) + texto. SPEC §C-10.6.
 import type { ProviderDispatch } from '../types';
 import { fetchImageAsBase64, estimateTokens } from './shared';
+import { AppError } from '../../errors';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -27,6 +28,7 @@ export const dispatchGemini: ProviderDispatch = async (model, prompt, req) => {
       generationConfig: { temperature: 0.2, maxOutputTokens: req.maxTokens ?? 1024 },
     }),
   });
+  if (res.status === 429) throw new AppError('ai_vision_exhausted');
   if (!res.ok) throw new Error(`gemini_http_${res.status}`);
 
   const json = (await res.json()) as GeminiResponse;
