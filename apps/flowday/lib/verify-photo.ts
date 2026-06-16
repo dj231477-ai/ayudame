@@ -18,6 +18,11 @@ export interface VerifyPhotoInput {
   photoPath: string; // ruta dentro del bucket: {user_id}/{block_id}/{ts}.jpg
   blockType: string;
   taskName: string;
+  /**
+   * true cuando el reproceso viene del drenado de verification_queue (§C-14.3): en ese caso
+   * NO se vuelve a encolar al agotarse la visión (la fila ya está en la cola), solo se propaga.
+   */
+  fromQueue?: boolean;
 }
 
 export interface VerifyPhotoResult {
@@ -49,7 +54,7 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
       imageUrl: signed.signedUrl,
     });
   } catch (e) {
-    if (e instanceof AppError && e.code === 'ai_vision_exhausted') {
+    if (e instanceof AppError && e.code === 'ai_vision_exhausted' && !input.fromQueue) {
       await svc.from('verification_queue').insert({
         user_id: input.userId,
         block_id: input.blockId,

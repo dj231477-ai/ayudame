@@ -590,24 +590,36 @@ export type Database = {
       }
       verification_queue: {
         Row: {
+          attempts: number
           block_id: string
           created_at: string
           id: string
+          last_error: string | null
           photo_path: string
+          status: string
+          updated_at: string
           user_id: string
         }
         Insert: {
+          attempts?: number
           block_id: string
           created_at?: string
           id?: string
+          last_error?: string | null
           photo_path: string
+          status?: string
+          updated_at?: string
           user_id: string
         }
         Update: {
+          attempts?: number
           block_id?: string
           created_at?: string
           id?: string
+          last_error?: string | null
           photo_path?: string
+          status?: string
+          updated_at?: string
           user_id?: string
         }
         Relationships: [
