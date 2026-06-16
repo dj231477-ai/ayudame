@@ -1,0 +1,6 @@
+{
+  "name": "@flowday/db",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Esquema SQL compartido (SPEC §C-7). SQL puro, sin imports de código (regla §C-5.3). Sin scripts JS: turbo lo omite para lint/test/typecheck/build."
+}

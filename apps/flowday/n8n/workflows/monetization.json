@@ -1,0 +1,36 @@
+{
+  "name": "monetization",
+  "_comment": "SPEC §C-12.2 / §C-9.7: cron diario; evalúa métricas y aplica triggers (flags + email). La lógica vive en la app (AR-3).",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "days", "daysInterval": 1, "triggerAtHour": 6 }] }
+      },
+      "id": "cron-daily",
+      "name": "Daily 06:00 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.APP_URL}}/internal/monetization/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
+        },
+        "options": {}
+      },
+      "id": "call-monetization",
+      "name": "POST /internal/monetization/run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Daily 06:00 UTC": { "main": [[{ "node": "POST /internal/monetization/run", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

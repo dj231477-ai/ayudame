@@ -1,0 +1,70 @@
+# Oracle Cloud Always Free (ARM A1) — orquestación FlowDay. SPEC §C-16.3.
+# INV-8: este Postgres es SOLO para n8n; la base de producto es Supabase.
+# E2: límites de CPU/memoria por contenedor. Ollama best-effort, nunca ruta crítica de visión.
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    restart: always
+    ports: ['5678:5678']
+    environment:
+      - N8N_HOST=${DOMAIN}
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://${DOMAIN}/
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      # Variables usadas por los workflows (no son secretos de la app de producto):
+      - APP_URL=${APP_URL}
+      - INTERNAL_ADMIN_SECRET=${INTERNAL_ADMIN_SECRET}
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
+    deploy:
+      resources:
+        limits: { cpus: '2.0', memory: 6g } # E2
+    volumes: ['n8n_data:/home/node/.n8n']
+    depends_on: [postgres]
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: always
+    ports: ['11434:11434'] # exponer solo en red interna/VPN, no público
+    deploy:
+      resources:
+        limits: { cpus: '1.5', memory: 8g } # E2
+    volumes: ['ollama_data:/root/.ollama']
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      - POSTGRES_DB=n8n
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 2g }
+    volumes: ['postgres_data:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U n8n']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on: [n8n]
+
+volumes:
+  n8n_data: {}
+  ollama_data: {}
+  postgres_data: {}

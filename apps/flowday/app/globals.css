@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mobile-first base (INV-10). */
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body {
+  @apply bg-neutral-50 text-neutral-900 antialiased;
+  min-height: 100dvh;
+}
+
+@media (prefers-color-scheme: dark) {
+  html,
+  body {
+    @apply bg-neutral-950 text-neutral-100;
+  }
+}

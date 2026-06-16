@@ -1,0 +1,59 @@
+# Gate de CI antes de merge a main. SPEC §C-18.5.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # §C-18.5 paso 1: lint + test + build en verde.
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      # §C-18.5 paso 2: ningún secreto en bundles de cliente (INV-4, S1).
+      - name: Anti-secret gate
+        run: npm run ci:no-secrets
+
+  # §C-18.5 paso 4: migraciones nuevas con numeración monotónica y RLS en tablas de usuario.
+  migrations-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verificar RLS en migraciones de tablas de usuario
+        run: |
+          set -e
+          echo "Comprobando que cada migración con 'create table' incluye 'enable row level security'..."
+          fail=0
+          for f in packages/db/migrations/*.sql apps/flowday/db/migrations/*.sql; do
+            if grep -qiE 'create table' "$f"; then
+              if ! grep -qiE 'enable row level security' "$f"; then
+                echo "FALTA RLS en: $f"
+                fail=1
+              fi
+            fi
+          done
+          exit $fail

@@ -1,0 +1,39 @@
+{
+  "name": "morning-briefing",
+  "_comment": "SPEC §C-12.2 / §C-12.5: cada 5 min; la app envía briefing a los usuarios cuya hora local sea ~05:00 (autoridad de '05:00' = app). Incluye tareas de Google Tasks si están conectadas.",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] }
+      },
+      "id": "cron-5min",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.APP_URL}}/internal/scheduler/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"job\":\"briefing\"}",
+        "options": {}
+      },
+      "id": "call-scheduler",
+      "name": "POST /internal/scheduler/run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": { "main": [[{ "node": "POST /internal/scheduler/run", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

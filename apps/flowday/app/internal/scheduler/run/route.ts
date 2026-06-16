@@ -1,0 +1,141 @@
+import { z } from 'zod';
+import type { FlowDayClient } from '@flowday/core/auth';
+import { logger, newRequestId } from '@flowday/core/observability/logger';
+import { createServiceClient } from '@/lib/supabase/service';
+import { canTransition } from '@/lib/blocks/state-machine';
+import { pushToUser } from '@/lib/push/send';
+import { listTasks } from '@/lib/google/tasks';
+import { localDate, localMinutes, timeToMinutes, addDays } from '@/lib/datetime';
+
+// =============================================================================
+// Scheduler interno  [SPEC §C-12.2/§C-12.5, INV-12]
+// Realiza la lógica de agenda EN LA APP (AR-3). n8n solo dispara este endpoint por cron
+// (firmado con INTERNAL_ADMIN_SECRET). Sigue el patrón de §C-11.7 (/internal/*).
+// Jobs: schedule (start/warning/end), reminders (foto pendiente), briefing (mañana).
+// =============================================================================
+export const dynamic = 'force-dynamic';
+
+const Body = z.object({ job: z.enum(['schedule', 'reminders', 'briefing']) });
+
+const TICK_WINDOW = 5; // minutos (cron cada 5 min)
+const WARNING_BEFORE_END = 10; // §C-13.3 paso 3
+const BRIEFING_MIN = 5 * 60; // 05:00 local
+
+function authorized(request: Request): boolean {
+  const secret = process.env.INTERNAL_ADMIN_SECRET;
+  const provided = request.headers.get('x-internal-secret');
+  return Boolean(secret && provided && secret === provided);
+}
+
+export async function POST(request: Request) {
+  const requestId = newRequestId();
+  if (!authorized(request)) {
+    return Response.json({ error: { code: 'unauthorized', message: 'invalid secret' } }, { status: 401 });
+  }
+  const parsed = Body.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return Response.json({ error: { code: 'bad_request', message: 'invalid job' } }, { status: 400 });
+  }
+
+  const svc = createServiceClient();
+  try {
+    let actions = 0;
+    if (parsed.data.job === 'schedule') actions = await runSchedule(svc);
+    else if (parsed.data.job === 'reminders') actions = await runReminders(svc);
+    else actions = await runBriefing(svc);
+    logger.info({ event: 'scheduler.ok', request_id: requestId, route: '/internal/scheduler/run' });
+    return Response.json({ ok: true, job: parsed.data.job, actions });
+  } catch {
+    logger.error({ event: 'scheduler.failed', request_id: requestId, error: { code: 'internal' } });
+    return Response.json({ error: { code: 'internal', message: 'scheduler error' } }, { status: 500 });
+  }
+}
+
+async function tzMap(svc: FlowDayClient, userIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (userIds.length === 0) return map;
+  const { data } = await svc.from('profiles').select('id, timezone').in('id', userIds);
+  for (const p of data ?? []) map.set(p.id, p.timezone);
+  return map;
+}
+
+async function runSchedule(svc: FlowDayClient): Promise<number> {
+  const now = new Date();
+  // Ventana de fechas UTC que cubre cualquier tz.
+  const dates = [localDate(addDays(now, -1), 'UTC'), localDate(now, 'UTC'), localDate(addDays(now, 1), 'UTC')];
+  const { data: blocks } = await svc
+    .from('blocks')
+    .select('id, user_id, start_time, end_time, label, status, date')
+    .in('status', ['pending', 'active'])
+    .in('date', dates);
+
+  const list = blocks ?? [];
+  const tz = await tzMap(svc, [...new Set(list.map((b) => b.user_id))]);
+  let actions = 0;
+
+  for (const b of list) {
+    const zone = tz.get(b.user_id) ?? 'America/Bogota';
+    if (b.date !== localDate(now, zone)) continue; // solo "hoy" en la tz del usuario (INV-12)
+
+    const nowMin = localMinutes(now, zone);
+    const startMin = timeToMinutes(b.start_time);
+    const endMin = timeToMinutes(b.end_time);
+    const warnMin = endMin - WARNING_BEFORE_END;
+    const within = (t: number) => nowMin >= t && nowMin < t + TICK_WINDOW;
+
+    if (b.status === 'pending' && within(startMin) && canTransition('pending', 'active')) {
+      await svc.from('blocks').update({ status: 'active' }).eq('id', b.id);
+      await pushToUser(b.user_id, { title: 'Bloque iniciado', body: b.label, url: '/focus' });
+      actions++;
+    } else if (b.status === 'active' && within(warnMin)) {
+      await pushToUser(b.user_id, { title: 'Faltan ~10 min', body: `Prepara tu foto: ${b.label}`, url: '/focus' });
+      actions++;
+    } else if (b.status === 'active' && within(endMin) && canTransition('active', 'awaiting_photo')) {
+      await svc.from('blocks').update({ status: 'awaiting_photo' }).eq('id', b.id);
+      await pushToUser(b.user_id, { title: 'Sube tu foto', body: b.label, url: '/focus' });
+      actions++;
+    }
+  }
+  return actions;
+}
+
+async function runReminders(svc: FlowDayClient): Promise<number> {
+  const now = Date.now();
+  const { data: blocks } = await svc
+    .from('blocks')
+    .select('id, user_id, label, updated_at, status')
+    .eq('status', 'awaiting_photo');
+  let actions = 0;
+  for (const b of blocks ?? []) {
+    const ageMin = (now - new Date(b.updated_at).getTime()) / 60000;
+    // ≈3 recordatorios entre los 15 y 30 min (§C-13.5), cron cada 5 min.
+    if (ageMin >= 15 && ageMin <= 32) {
+      await pushToUser(b.user_id, { title: 'Foto pendiente', body: b.label, url: '/focus' });
+      actions++;
+    }
+  }
+  return actions;
+}
+
+async function runBriefing(svc: FlowDayClient): Promise<number> {
+  const now = new Date();
+  const { data: profiles } = await svc.from('profiles').select('id, timezone');
+  let actions = 0;
+  for (const p of profiles ?? []) {
+    const nowMin = localMinutes(now, p.timezone);
+    if (nowMin < BRIEFING_MIN || nowMin >= BRIEFING_MIN + TICK_WINDOW) continue; // ≈05:00 local
+
+    const today = localDate(now, p.timezone);
+    const { data: blocks } = await svc.from('blocks').select('id').eq('user_id', p.id).eq('date', today);
+    let body = `Tienes ${blocks?.length ?? 0} bloque(s) hoy.`;
+    try {
+      const tasks = await listTasks(p.id);
+      if (tasks.length > 0) body += ` ${tasks.length} tarea(s) en Google Tasks.`;
+    } catch {
+      // Google no conectado o error: briefing sin tareas.
+    }
+    await pushToUser(p.id, { title: 'Buenos días ☀️', body, url: '/dashboard' });
+    actions++;
+  }
+  return actions;
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "//": "SPEC §C-5.4 [ILUSTRATIVO]. Adaptado: Turbo 2.x renombró 'pipeline' -> 'tasks'. Contrato (build/dev/test/lint) intacto; se añade typecheck (R13 TypeScript estricto).",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "lint": {}
+  }
+}

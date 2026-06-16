@@ -1,0 +1,25 @@
+{
+  "name": "@flowday/ui",
+  "version": "2.0.0",
+  "private": true,
+  "description": "@flowday/ui — componentes React compartidos (SPEC §C-5). Puede importar @flowday/core.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@flowday/core": "*"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.2",
+    "typescript": "^5.7.2"
+  }
+}
