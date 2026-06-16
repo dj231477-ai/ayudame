@@ -1,5 +1,7 @@
 import 'server-only';
 import { callAI } from '@flowday/core/ai/router';
+import { refundCredits } from '@flowday/core/credits/check';
+import { ACTION_COSTS } from '@flowday/core/credits/pricing';
 import { AppError } from '@flowday/core/errors';
 import { logger } from '@flowday/core/observability/logger';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -80,6 +82,10 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
     usage_log_id: ai.usageLogId,
   });
   if (evErr) {
+    // Cobramos pero perdimos el resultado (no se pudo registrar la evidencia): es un fallo del
+    // sistema (§C-9.6). Reembolsamos el crédito ya cobrado (enlazado a ai.usageLogId) antes de
+    // propagar; si el propio reembolso falla, refundCredits lo registra y no enmascaramos el error.
+    await refundCredits(input.userId, ACTION_COSTS.photo_verify, ai.usageLogId).catch(() => {});
     logger.error({ event: 'verify.evidence_insert_failed', user_id: input.userId, error: { code: 'internal' } });
     throw new AppError('internal');
   }
