@@ -110,14 +110,16 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
         const pkg = s.metadata.package as CreditPackageKey;
         const creditsUsd = CREDIT_PACKAGES[pkg]?.credits_usd;
         if (creditsUsd == null) return;
-        await svc.rpc('add_credits', { p_user_id: userId, p_amount: creditsUsd });
-        await svc.from('credit_purchases').insert({
-          user_id: userId,
-          package: pkg,
-          amount_usd: (s.amount_total ?? 0) / 100,
-          credits_added: creditsUsd,
-          stripe_payment_id: typeof s.payment_intent === 'string' ? s.payment_intent : null,
-          status: 'completed',
+        // Acreditación atómica e idempotente por stripe_payment_id (INV-6): un reintento
+        // de Stripe tras fallo parcial NO duplica el saldo. Clave garantizada no nula
+        // (payment_intent o, en su defecto, el id de la sesión).
+        const paymentId = typeof s.payment_intent === 'string' ? s.payment_intent : s.id;
+        await svc.rpc('record_credit_purchase', {
+          p_user_id: userId,
+          p_package: pkg,
+          p_amount_usd: (s.amount_total ?? 0) / 100,
+          p_credits: creditsUsd,
+          p_stripe_payment_id: paymentId,
         });
       } else if (s.metadata?.kind === 'subscription') {
         const plan = s.metadata.plan ?? 'pro';

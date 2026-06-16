@@ -627,6 +627,16 @@ export type Database = {
         Args: { p_provider: string; p_tokens: number }
         Returns: undefined
       }
+      record_credit_purchase: {
+        Args: {
+          p_user_id: string
+          p_package: string
+          p_amount_usd: number
+          p_credits: number
+          p_stripe_payment_id: string
+        }
+        Returns: boolean
+      }
       refund_credits: {
         Args: { p_amount: number; p_usage_log_id: string; p_user_id: string }
         Returns: undefined
