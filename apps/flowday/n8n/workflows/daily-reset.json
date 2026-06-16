@@ -1,0 +1,39 @@
+{
+  "name": "daily-reset",
+  "_comment": "Fuera del catálogo original §C-12.2 pero necesario para §C-13.3: streak → 0 para usuarios sin bloque verified ese día. Cron 00:05 UTC; la app evalúa en tz del usuario (§C-12.5).",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24, "triggerAtHour": 0, "triggerAtMinute": 5 }] }
+      },
+      "id": "cron-daily-reset",
+      "name": "Daily 00:05 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.APP_URL}}/internal/scheduler/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"job\":\"daily_reset\"}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "call-daily-reset",
+      "name": "POST /internal/scheduler/run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Daily 00:05 UTC": { "main": [[{ "node": "POST /internal/scheduler/run", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

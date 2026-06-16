@@ -1,0 +1,36 @@
+{
+  "name": "ai-usage-tracker",
+  "_comment": "SPEC §C-12.2: reconciliación horaria opcional de ai_daily_usage. No es la fuente primaria (eso es increment_ai_usage en callAI). Solo normaliza/corrige derivas. Llama endpoint admin protegido.",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 1 }] }
+      },
+      "id": "cron-hourly",
+      "name": "Every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.APP_URL}}/internal/ai-usage/reconcile",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "call-ai-usage",
+      "name": "POST /internal/ai-usage/reconcile",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Every hour": { "main": [[{ "node": "POST /internal/ai-usage/reconcile", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
