@@ -1826,4 +1826,5 @@ N8N_PASSWORD=
 - **Modelo Ollama:** `qwen3:8b` en lugar de `mistral:7b-instruct-q4_K_M` (decisión del fundador).
 - **Dominio n8n:** `n8ndavid.favorme.shop` → Let's Encrypt cert activo (expira 2026-09-14). Renovación automática cron lunes 03:00 UTC vía `/opt/services/nginx/certbot-renew.sh`.
 - **Supabase project ID:** `qgwgzbvfarimbgoyskkd` (base de datos de producto, no de n8n — INV-8).
-- **Scheduler:** job `daily_reset` añadido; n8n debe configurar cron ~00:05 UTC que dispare `POST /internal/scheduler/run` con `{"job":"daily_reset"}`.
+- **Scheduler:** job `daily_reset` añadido y cubierto por `daily-reset.json` (cron 00:05 UTC). ✅
+- **n8n workflows:** 7 workflows importados y activos en `n8n-n8n-1` (2026-06-16). `APP_URL` e `INTERNAL_ADMIN_SECRET` añadidos al docker-compose de n8n. Ver `apps/flowday/n8n/workflows/`.
