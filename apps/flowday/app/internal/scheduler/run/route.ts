@@ -11,11 +11,12 @@ import { localDate, localMinutes, timeToMinutes, addDays } from '@/lib/datetime'
 // Scheduler interno  [SPEC §C-12.2/§C-12.5, INV-12]
 // Realiza la lógica de agenda EN LA APP (AR-3). n8n solo dispara este endpoint por cron
 // (firmado con INTERNAL_ADMIN_SECRET). Sigue el patrón de §C-11.7 (/internal/*).
-// Jobs: schedule (start/warning/end), reminders (foto pendiente), briefing (mañana).
+// Jobs: schedule (start/warning/end), reminders (foto pendiente), briefing (mañana),
+//       daily_reset (streak → 0 para usuarios sin verificados ese día).
 // =============================================================================
 export const dynamic = 'force-dynamic';
 
-const Body = z.object({ job: z.enum(['schedule', 'reminders', 'briefing']) });
+const Body = z.object({ job: z.enum(['schedule', 'reminders', 'briefing', 'daily_reset']) });
 
 const TICK_WINDOW = 5; // minutos (cron cada 5 min)
 const WARNING_BEFORE_END = 10; // §C-13.3 paso 3
@@ -42,7 +43,8 @@ export async function POST(request: Request) {
     let actions = 0;
     if (parsed.data.job === 'schedule') actions = await runSchedule(svc);
     else if (parsed.data.job === 'reminders') actions = await runReminders(svc);
-    else actions = await runBriefing(svc);
+    else if (parsed.data.job === 'briefing') actions = await runBriefing(svc);
+    else actions = await runDailyReset(svc);
     logger.info({ event: 'scheduler.ok', request_id: requestId, route: '/internal/scheduler/run' });
     return Response.json({ ok: true, job: parsed.data.job, actions });
   } catch {
@@ -136,6 +138,33 @@ async function runBriefing(svc: FlowDayClient): Promise<number> {
     }
     await pushToUser(p.id, { title: 'Buenos días ☀️', body, url: '/dashboard' });
     actions++;
+  }
+  return actions;
+}
+
+// Corre una vez al día (n8n ~00:05 UTC). Para cada usuario con streak > 0, comprueba si
+// tuvo ≥1 bloque verified "ayer" en su tz. Si no, reinicia el streak a 0 (§C-13.3).
+async function runDailyReset(svc: FlowDayClient): Promise<number> {
+  const now = new Date();
+  const { data: profiles } = await svc.from('profiles').select('id, timezone, streak').gt('streak', 0);
+  let actions = 0;
+  for (const p of profiles ?? []) {
+    const yesterday = localDate(addDays(now, -1), p.timezone);
+    const { data: rows } = await svc
+      .from('evidence')
+      .select('created_at')
+      .eq('user_id', p.id)
+      .eq('verified', true)
+      .gte('created_at', addDays(now, -2).toISOString())
+      .lte('created_at', now.toISOString());
+
+    const hadVerifiedYesterday = (rows ?? []).some(
+      (r) => localDate(new Date(r.created_at), p.timezone) === yesterday,
+    );
+    if (!hadVerifiedYesterday) {
+      await svc.from('profiles').update({ streak: 0 }).eq('id', p.id);
+      actions++;
+    }
   }
   return actions;
 }
