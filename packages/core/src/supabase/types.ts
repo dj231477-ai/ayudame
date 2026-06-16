@@ -311,6 +311,41 @@ export type Database = {
         }
         Relationships: []
       }
+      google_tokens: {
+        Row: {
+          access_token: string | null
+          expiry: string | null
+          refresh_token: string
+          scope: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_token?: string | null
+          expiry?: string | null
+          refresh_token: string
+          scope?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_token?: string | null
+          expiry?: string | null
+          refresh_token?: string
+          scope?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "google_tokens_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       habits: {
         Row: {
           completed: boolean
@@ -623,6 +658,10 @@ export type Database = {
         Returns: number
       }
       get_platform_metrics: { Args: Record<PropertyKey, never>; Returns: Json }
+      grant_signup_stipend: {
+        Args: { p_amount: number; p_user_id: string }
+        Returns: number
+      }
       increment_ai_usage: {
         Args: { p_provider: string; p_tokens: number }
         Returns: undefined
@@ -638,7 +677,7 @@ export type Database = {
         Returns: boolean
       }
       refund_credits: {
-        Args: { p_amount: number; p_usage_log_id: string; p_user_id: string }
+        Args: { p_amount: number; p_user_id: string; p_usage_log_id?: string }
         Returns: undefined
       }
     }

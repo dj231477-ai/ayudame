@@ -39,7 +39,7 @@ describe('checkAndDeductCredits (INV-2, §C-9.5, §C-14.4)', () => {
         single: vi.fn().mockResolvedValue({ data: { id: logId }, error: null }),
       }),
     });
-    mockClient.mockReturnValue(db as ReturnType<typeof createServiceClient>);
+    mockClient.mockReturnValue(db as unknown as ReturnType<typeof createServiceClient>);
 
     const result = await checkAndDeductCredits('user-1', 'photo_verify', 'gemini');
 
@@ -58,7 +58,7 @@ describe('checkAndDeductCredits (INV-2, §C-9.5, §C-14.4)', () => {
   it('devuelve allowed:false cuando deduct_credits falla (saldo insuficiente)', async () => {
     const db = makeDb();
     db._rpc.mockResolvedValue({ data: null, error: { message: 'insufficient_credits' } });
-    mockClient.mockReturnValue(db as ReturnType<typeof createServiceClient>);
+    mockClient.mockReturnValue(db as unknown as ReturnType<typeof createServiceClient>);
 
     const result = await checkAndDeductCredits('user-2', 'photo_verify', 'gemini');
 
@@ -82,7 +82,7 @@ describe('checkAndDeductCredits (INV-2, §C-9.5, §C-14.4)', () => {
         single: vi.fn().mockResolvedValue({ data: null, error: { message: 'db error' } }),
       }),
     });
-    mockClient.mockReturnValue(db as ReturnType<typeof createServiceClient>);
+    mockClient.mockReturnValue(db as unknown as ReturnType<typeof createServiceClient>);
 
     await expect(checkAndDeductCredits('user-3', 'photo_verify', 'gemini')).rejects.toThrow(
       AppError,
@@ -105,7 +105,7 @@ describe('checkAndDeductCredits (INV-2, §C-9.5, §C-14.4)', () => {
           single: vi.fn().mockResolvedValue({ data: { id: 'log-x' }, error: null }),
         }),
       });
-      mockClient.mockReturnValue(db as ReturnType<typeof createServiceClient>);
+      mockClient.mockReturnValue(db as unknown as ReturnType<typeof createServiceClient>);
 
       await checkAndDeductCredits('user-4', action, 'groq');
 
@@ -125,7 +125,7 @@ describe('refundCredits (§C-9.6, §C-14.3)', () => {
   it('llama a refund_credits con los parámetros correctos', async () => {
     const db = makeDb();
     db._rpc.mockResolvedValue({ error: null });
-    mockClient.mockReturnValue(db as ReturnType<typeof createServiceClient>);
+    mockClient.mockReturnValue(db as unknown as ReturnType<typeof createServiceClient>);
 
     await refundCredits('user-5', 0.006, 'log-xyz');
 
@@ -139,7 +139,7 @@ describe('refundCredits (§C-9.6, §C-14.3)', () => {
   it('lanza AppError(internal) si el RPC de reembolso falla', async () => {
     const db = makeDb();
     db._rpc.mockResolvedValue({ error: { message: 'rpc error' } });
-    mockClient.mockReturnValue(db as ReturnType<typeof createServiceClient>);
+    mockClient.mockReturnValue(db as unknown as ReturnType<typeof createServiceClient>);
 
     await expect(refundCredits('user-6', 0.006, 'log-fail')).rejects.toThrow(AppError);
   });
