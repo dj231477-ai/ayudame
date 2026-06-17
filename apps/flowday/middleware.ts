@@ -74,5 +74,7 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // Excluye estáticos y assets PWA del middleware.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icons/).*)'],
+  // Excluye también /auth/* (callback/signout): el intercambio PKCE gestiona sus propias
+  // cookies y el middleware no debe correr getUser() antes de exchangeCodeForSession.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icons/|auth/).*)'],
 };
