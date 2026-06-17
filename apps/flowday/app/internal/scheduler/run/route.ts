@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { FlowDayClient } from '@flowday/core/auth';
 import { AppError } from '@flowday/core/errors';
 import { logger, newRequestId } from '@flowday/core/observability/logger';
+import { authorizeInternal } from '@/lib/internal-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { canTransition } from '@/lib/blocks/state-machine';
 import { pushToUser } from '@/lib/push/send';
@@ -28,15 +29,9 @@ const BRIEFING_MIN = 5 * 60; // 05:00 local
 const QUEUE_BATCH = 20; // filas por corrida del drenado de verification_queue
 const QUEUE_MAX_ATTEMPTS = 5; // tras este nº de intentos fallidos, la fila se marca 'failed'
 
-function authorized(request: Request): boolean {
-  const secret = process.env.INTERNAL_ADMIN_SECRET;
-  const provided = request.headers.get('x-internal-secret');
-  return Boolean(secret && provided && secret === provided);
-}
-
 export async function POST(request: Request) {
   const requestId = newRequestId();
-  if (!authorized(request)) {
+  if (!authorizeInternal(request)) {
     return Response.json({ error: { code: 'unauthorized', message: 'invalid secret' } }, { status: 401 });
   }
   const parsed = Body.safeParse(await request.json().catch(() => null));
