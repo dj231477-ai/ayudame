@@ -1828,3 +1828,21 @@ N8N_PASSWORD=
 - **Supabase project ID:** `qgwgzbvfarimbgoyskkd` (base de datos de producto, no de n8n — INV-8).
 - **Scheduler:** job `daily_reset` añadido y cubierto por `daily-reset.json` (cron 00:05 UTC). ✅
 - **n8n workflows:** 7 workflows importados y activos en `n8n-n8n-1` (2026-06-16). `APP_URL` e `INTERNAL_ADMIN_SECRET` añadidos al docker-compose de n8n. Ver `apps/flowday/n8n/workflows/`.
+
+### Código — hallazgos de auditoría (2026-06-17, rama `fix/audit-findings`)
+
+| # | Tarea | Estado | Commit |
+|---|-------|--------|--------|
+| C-1 | Idempotencia de webhooks segura (evita doble crédito) | ✅ | `b636051` |
+| C-2 | Typecheck/build en verde | ✅ | `2f9415a` |
+| A-1 | Drenado de `verification_queue` para recuperar verificaciones | ✅ | `f237630` |
+| A-2 | CI ejecuta tests de aislamiento RLS (INV-1) | ✅ | `216162d` |
+| M-1 | Acreditar stipend de plan Pro/Team (§C-9.2) | ✅ | `5c65749` |
+| M-2 | Reembolsar crédito si falla el insert de evidence (§C-9.6) | ✅ | `d495c06` |
+| M-3 | Limpieza de objetos huérfanos de Storage (§C-14.4 / §C-15.3) | ✅ | `261a1fc` |
+| M-4 | CSP con nonce por request; eliminar `unsafe-inline` de `script-src` (§C-8.7) | ✅ | `81c3f6b` |
+| M-5 | Comparar el secreto admin en tiempo constante (`timingSafeEqual`, §C-11.7) | ✅ | `34bc876` |
+
+**Extra (no-auditoría):** enrutado de texto del fundador a Ollama `qwen3:8b` y visión siempre Gemini (`1043654`).
+
+**Verificación:** typecheck verde · tests 9 passed / 5 skipped (RLS integration, requiere entorno).
