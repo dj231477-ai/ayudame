@@ -10,6 +10,10 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code');
   const next = searchParams.get('next') ?? '/dashboard';
 
+  // Supabase/Google pueden volver con error en la query en vez de con code.
+  const providerError = searchParams.get('error');
+  const providerErrorDescription = searchParams.get('error_description');
+
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -24,7 +28,23 @@ export async function GET(request: NextRequest) {
       }
       return NextResponse.redirect(`${origin}${next}`);
     }
-    logger.warn({ event: 'auth.exchange_failed', request_id: requestId, route: '/auth/callback', error: { code: 'unauthorized' } });
+    // Loguea el motivo REAL del fallo de intercambio (PKCE/verifier, etc.) para diagnóstico.
+    logger.warn({
+      event: 'auth.exchange_failed',
+      request_id: requestId,
+      route: '/auth/callback',
+      error: { code: error.code ?? 'exchange_failed' },
+      exchange_error_message: error.message,
+      exchange_error_status: error.status,
+    });
+  } else {
+    logger.warn({
+      event: 'auth.callback_no_code',
+      request_id: requestId,
+      route: '/auth/callback',
+      provider_error: providerError,
+      provider_error_description: providerErrorDescription,
+    });
   }
 
   return NextResponse.redirect(`${origin}/?auth_error=1`);
