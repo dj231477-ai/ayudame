@@ -17,41 +17,73 @@ import { getAIProvider } from './router';
 import { getDailyUsage } from './usage';
 
 const mockUsage = vi.mocked(getDailyUsage);
+const FOUNDER_ID = 'founder-uuid-test';
 
 describe('getAIProvider (§C-10.3, INV-7)', () => {
   beforeEach(() => {
     mockUsage.mockReset();
-    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.FOUNDER_USER_ID;
   });
 
-  it('visión usa Gemini bajo cuota', async () => {
+  // --- Visión ---------------------------------------------------------------
+
+  it('visión siempre usa Gemini, sin importar cuota', async () => {
+    mockUsage.mockResolvedValue(99_999); // cuota agotada: no importa
+    const p = await getAIProvider('vision');
+    expect(p.provider).toBe('gemini');
+    expect(p.model).toBe('gemini-2.5-flash');
+  });
+
+  it('visión siempre Gemini también para el fundador (INV-7)', async () => {
+    process.env.FOUNDER_USER_ID = FOUNDER_ID;
     mockUsage.mockResolvedValue(0);
-    expect((await getAIProvider('vision')).provider).toBe('gemini');
+    expect((await getAIProvider('vision', FOUNDER_ID)).provider).toBe('gemini');
   });
 
-  it('visión cae a Claude si Gemini agotado y hay ANTHROPIC_API_KEY', async () => {
+  it('visión nunca usa Ollama (INV-7)', async () => {
     mockUsage.mockResolvedValue(99_999);
-    process.env.ANTHROPIC_API_KEY = 'sk-test';
-    expect((await getAIProvider('vision')).provider).toBe('claude');
+    const p = await getAIProvider('vision');
+    expect(p.provider).not.toBe('ollama');
   });
 
-  it('visión agotada sin Claude ⇒ ai_vision_exhausted (NUNCA Ollama, INV-7)', async () => {
-    mockUsage.mockResolvedValue(99_999);
-    await expect(getAIProvider('vision')).rejects.toMatchObject({ code: 'ai_vision_exhausted' });
+  // --- Texto fundador -------------------------------------------------------
+
+  it('texto fundador ⇒ Ollama qwen3:8b directo', async () => {
+    process.env.FOUNDER_USER_ID = FOUNDER_ID;
+    const p = await getAIProvider('text', FOUNDER_ID);
+    expect(p.provider).toBe('ollama');
+    expect(p.model).toBe('qwen3:8b');
+    expect(mockUsage).not.toHaveBeenCalled(); // no consume cuota cloud
   });
 
-  it('texto usa Groq bajo cuota', async () => {
+  it('texto fundador sin FOUNDER_USER_ID en env ⇒ router normal', async () => {
+    // FOUNDER_USER_ID no definido: el UUID no activa el atajo
+    mockUsage.mockResolvedValue(0);
+    expect((await getAIProvider('text', FOUNDER_ID)).provider).toBe('groq');
+  });
+
+  // --- Texto usuarios -------------------------------------------------------
+
+  it('texto usuario usa Groq bajo cuota', async () => {
+    mockUsage.mockResolvedValue(0);
+    expect((await getAIProvider('text', 'other-user')).provider).toBe('groq');
+  });
+
+  it('texto usuario: Groq agotado ⇒ Cerebras', async () => {
+    mockUsage.mockImplementation(async (provider) => (provider === 'groq' ? 9_999 : 0));
+    expect((await getAIProvider('text', 'other-user')).provider).toBe('cerebras');
+  });
+
+  it('texto usuario: Groq y Cerebras agotados ⇒ Ollama qwen3:8b (best-effort)', async () => {
+    mockUsage.mockResolvedValue(10_000_000);
+    const p = await getAIProvider('text', 'other-user');
+    expect(p.provider).toBe('ollama');
+    expect(p.model).toBe('qwen3:8b');
+  });
+
+  it('texto sin userId ⇒ router normal (no activa fundador)', async () => {
+    process.env.FOUNDER_USER_ID = FOUNDER_ID;
     mockUsage.mockResolvedValue(0);
     expect((await getAIProvider('text')).provider).toBe('groq');
-  });
-
-  it('texto: Groq agotado ⇒ Cerebras', async () => {
-    mockUsage.mockImplementation(async (provider) => (provider === 'groq' ? 9_999 : 0));
-    expect((await getAIProvider('text')).provider).toBe('cerebras');
-  });
-
-  it('texto: Groq y Cerebras agotados ⇒ Ollama (best-effort)', async () => {
-    mockUsage.mockResolvedValue(10_000_000);
-    expect((await getAIProvider('text')).provider).toBe('ollama');
   });
 });

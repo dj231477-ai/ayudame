@@ -1765,3 +1765,84 @@ N8N_PASSWORD=
 
 *FlowDay — Especificación de Producción 2.0 · Single Source of Truth · Junio 2026.*
 *Mantenida por el fundador. Cualquier cambio de contrato incrementa la versión (§C-2.1).*
+
+---
+
+## PROGRESO
+
+> Estado del servidor de producción (Contabo VPS · Ubuntu 24.04 · 12 GB RAM · 6 vCPU · 96 GB disco).
+> Actualizado: 2026-06-16.
+
+### Infraestructura base
+
+| Componente | Estado | Versión | Notas |
+|------------|--------|---------|-------|
+| Ubuntu 24.04 | ✅ Activo | 6.8.0-124-generic | VPS limpio, sin swap configurada |
+| Usuario `deployer` | ✅ Creado | — | No-root, grupo docker, sudo NOPASSWD |
+| **Docker Engine** | ✅ Instalado | 29.5.3 | Repo oficial; `hello-world` confirmado |
+| **Docker Compose** | ✅ Instalado | v5.1.4 (plugin) | `docker compose` (sin guion) |
+| **UFW Firewall** | ✅ Activo | — | Ver tabla de puertos abajo |
+| Estructura `/opt/services` | ✅ Creada | — | `n8n/`, `ollama/`, `nginx/`, `coolify/` |
+
+### Puertos de firewall (UFW)
+
+| Puerto | Protocolo | Estado | Servicio |
+|--------|-----------|--------|----------|
+| 22 | TCP | ABIERTO | SSH |
+| 80 | TCP | ABIERTO | HTTP |
+| 443 | TCP | ABIERTO | HTTPS |
+| 5678 | TCP | ABIERTO | n8n |
+| 8000 | TCP | ABIERTO | Coolify |
+| 11434 | TCP | **BLOQUEADO** | Ollama (solo acceso interno) |
+
+### Servicios desplegados
+
+| Servicio | Estado | Versión | Notas |
+|----------|--------|---------|-------|
+| **n8n** | ✅ Activo | 2.25.7 | `https://n8ndavid.favorme.shop` · auth básico activo |
+| **Postgres interno (n8n)** | ✅ Activo (healthy) | 15 | Solo red interna docker; INV-8 respetado |
+| **Nginx + SSL** | ✅ Activo | alpine | HTTPS TLSv1.2/1.3 · HSTS · HTTP→HTTPS redirect |
+| **Ollama + qwen3:8b** | ✅ Activo | qwen3:8b (5.2 GB) | Red interna `flowday`; puerto 11434 no expuesto; límite 7 GB RAM |
+| Coolify | ⏳ Pendiente | — | — |
+
+**Compose:** `/opt/services/n8n/docker-compose.yml` · Red docker: `flowday`
+**Secretos generados (2026-06-16):** `N8N_WEBHOOK_SECRET`, `INTERNAL_ADMIN_SECRET`, `POSTGRES_PASSWORD` → en `/root/flowday/.env` y `/opt/services/n8n/.env`
+
+### Código — fixes urgentes (2026-06-16)
+
+| # | Tarea | Estado | Commit |
+|---|-------|--------|--------|
+| 1 | Iconos PWA `icon-192.png` / `icon-512.png` con color `#1D9E75` | ✅ | `6401413` |
+| 2 | `supabase gen types` contra proyecto `qgwgzbvfarimbgoyskkd` (MCP) | ✅ | `2292ed0` |
+| 3 | Tests de `checkAndDeductCredits` y `refundCredits` (6 tests) | ✅ | `2feb4f2` |
+| 4 | Gemini 429 → `AppError('ai_vision_exhausted')` + encolado en `verification_queue` | ✅ | `b8734f4` |
+| 5 | Scheduler job `daily_reset`: streak → 0 si no hubo bloque verified ese día | ✅ | `22bbcc9` |
+
+**Tests core:** 38/38 ✅
+
+### Notas de arquitectura (desviaciones del spec)
+
+- **VM:** Contabo x86 (12 GB RAM, 6 vCPU) en lugar de Oracle ARM A1 (24 GB, 4 OCPU). Límites de recursos del compose ajustados proporcionalmente.
+- **Modelo Ollama:** `qwen3:8b` en lugar de `mistral:7b-instruct-q4_K_M` (decisión del fundador).
+- **Dominio n8n:** `n8ndavid.favorme.shop` → Let's Encrypt cert activo (expira 2026-09-14). Renovación automática cron lunes 03:00 UTC vía `/opt/services/nginx/certbot-renew.sh`.
+- **Supabase project ID:** `qgwgzbvfarimbgoyskkd` (base de datos de producto, no de n8n — INV-8).
+- **Scheduler:** job `daily_reset` añadido y cubierto por `daily-reset.json` (cron 00:05 UTC). ✅
+- **n8n workflows:** 7 workflows importados y activos en `n8n-n8n-1` (2026-06-16). `APP_URL` e `INTERNAL_ADMIN_SECRET` añadidos al docker-compose de n8n. Ver `apps/flowday/n8n/workflows/`.
+
+### Código — hallazgos de auditoría (2026-06-17, rama `fix/audit-findings`)
+
+| # | Tarea | Estado | Commit |
+|---|-------|--------|--------|
+| C-1 | Idempotencia de webhooks segura (evita doble crédito) | ✅ | `b636051` |
+| C-2 | Typecheck/build en verde | ✅ | `2f9415a` |
+| A-1 | Drenado de `verification_queue` para recuperar verificaciones | ✅ | `f237630` |
+| A-2 | CI ejecuta tests de aislamiento RLS (INV-1) | ✅ | `216162d` |
+| M-1 | Acreditar stipend de plan Pro/Team (§C-9.2) | ✅ | `5c65749` |
+| M-2 | Reembolsar crédito si falla el insert de evidence (§C-9.6) | ✅ | `d495c06` |
+| M-3 | Limpieza de objetos huérfanos de Storage (§C-14.4 / §C-15.3) | ✅ | `261a1fc` |
+| M-4 | CSP con nonce por request; eliminar `unsafe-inline` de `script-src` (§C-8.7) | ✅ | `81c3f6b` |
+| M-5 | Comparar el secreto admin en tiempo constante (`timingSafeEqual`, §C-11.7) | ✅ | `34bc876` |
+
+**Extra (no-auditoría):** enrutado de texto del fundador a Ollama `qwen3:8b` y visión siempre Gemini (`1043654`).
+
+**Verificación:** typecheck verde · tests 9 passed / 5 skipped (RLS integration, requiere entorno).

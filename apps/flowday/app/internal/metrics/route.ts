@@ -1,16 +1,11 @@
+import { authorizeInternal } from '@/lib/internal-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 
 // Métricas operativas y de negocio (§C-17.2). Solo service (INTERNAL_ADMIN_SECRET).
 export const dynamic = 'force-dynamic';
 
-function authorized(request: Request): boolean {
-  const secret = process.env.INTERNAL_ADMIN_SECRET;
-  const provided = request.headers.get('x-internal-secret');
-  return Boolean(secret && provided && secret === provided);
-}
-
 export async function GET(request: Request) {
-  if (!authorized(request)) {
+  if (!authorizeInternal(request)) {
     return Response.json({ error: { code: 'unauthorized', message: 'invalid secret' } }, { status: 401 });
   }
   const svc = createServiceClient();

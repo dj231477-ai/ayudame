@@ -1,35 +1,37 @@
 import { z } from 'zod';
 import type { FlowDayClient } from '@flowday/core/auth';
+import { AppError } from '@flowday/core/errors';
 import { logger, newRequestId } from '@flowday/core/observability/logger';
+import { authorizeInternal } from '@/lib/internal-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { canTransition } from '@/lib/blocks/state-machine';
 import { pushToUser } from '@/lib/push/send';
 import { listTasks } from '@/lib/google/tasks';
+import { verifyPhoto } from '@/lib/verify-photo';
 import { localDate, localMinutes, timeToMinutes, addDays } from '@/lib/datetime';
 
 // =============================================================================
 // Scheduler interno  [SPEC §C-12.2/§C-12.5, INV-12]
 // Realiza la lógica de agenda EN LA APP (AR-3). n8n solo dispara este endpoint por cron
 // (firmado con INTERNAL_ADMIN_SECRET). Sigue el patrón de §C-11.7 (/internal/*).
-// Jobs: schedule (start/warning/end), reminders (foto pendiente), briefing (mañana).
+// Jobs: schedule (start/warning/end), reminders (foto pendiente), briefing (mañana),
+//       daily_reset (streak → 0 para usuarios sin verificados ese día).
 // =============================================================================
 export const dynamic = 'force-dynamic';
 
-const Body = z.object({ job: z.enum(['schedule', 'reminders', 'briefing']) });
+const Body = z.object({
+  job: z.enum(['schedule', 'reminders', 'briefing', 'daily_reset', 'verify_queue']),
+});
 
 const TICK_WINDOW = 5; // minutos (cron cada 5 min)
 const WARNING_BEFORE_END = 10; // §C-13.3 paso 3
 const BRIEFING_MIN = 5 * 60; // 05:00 local
-
-function authorized(request: Request): boolean {
-  const secret = process.env.INTERNAL_ADMIN_SECRET;
-  const provided = request.headers.get('x-internal-secret');
-  return Boolean(secret && provided && secret === provided);
-}
+const QUEUE_BATCH = 20; // filas por corrida del drenado de verification_queue
+const QUEUE_MAX_ATTEMPTS = 5; // tras este nº de intentos fallidos, la fila se marca 'failed'
 
 export async function POST(request: Request) {
   const requestId = newRequestId();
-  if (!authorized(request)) {
+  if (!authorizeInternal(request)) {
     return Response.json({ error: { code: 'unauthorized', message: 'invalid secret' } }, { status: 401 });
   }
   const parsed = Body.safeParse(await request.json().catch(() => null));
@@ -42,7 +44,9 @@ export async function POST(request: Request) {
     let actions = 0;
     if (parsed.data.job === 'schedule') actions = await runSchedule(svc);
     else if (parsed.data.job === 'reminders') actions = await runReminders(svc);
-    else actions = await runBriefing(svc);
+    else if (parsed.data.job === 'briefing') actions = await runBriefing(svc);
+    else if (parsed.data.job === 'daily_reset') actions = await runDailyReset(svc);
+    else actions = await runVerifyQueue(svc);
     logger.info({ event: 'scheduler.ok', request_id: requestId, route: '/internal/scheduler/run' });
     return Response.json({ ok: true, job: parsed.data.job, actions });
   } catch {
@@ -138,4 +142,91 @@ async function runBriefing(svc: FlowDayClient): Promise<number> {
     actions++;
   }
   return actions;
+}
+
+// Corre una vez al día (n8n ~00:05 UTC). Para cada usuario con streak > 0, comprueba si
+// tuvo ≥1 bloque verified "ayer" en su tz. Si no, reinicia el streak a 0 (§C-13.3).
+async function runDailyReset(svc: FlowDayClient): Promise<number> {
+  const now = new Date();
+  const { data: profiles } = await svc.from('profiles').select('id, timezone, streak').gt('streak', 0);
+  let actions = 0;
+  for (const p of profiles ?? []) {
+    const yesterday = localDate(addDays(now, -1), p.timezone);
+    const { data: rows } = await svc
+      .from('evidence')
+      .select('created_at')
+      .eq('user_id', p.id)
+      .eq('verified', true)
+      .gte('created_at', addDays(now, -2).toISOString())
+      .lte('created_at', now.toISOString());
+
+    const hadVerifiedYesterday = (rows ?? []).some(
+      (r) => localDate(new Date(r.created_at), p.timezone) === yesterday,
+    );
+    if (!hadVerifiedYesterday) {
+      await svc.from('profiles').update({ streak: 0 }).eq('id', p.id);
+      actions++;
+    }
+  }
+  return actions;
+}
+
+// Drena verification_queue (§C-14.3): reprocesa las verificaciones encoladas cuando la visión
+// estuvo agotada. Cuando vuelve la cuota, se verifican (y entonces se cobra, vía callAI). Es
+// idempotente: si el bloque ya no espera foto (verificado por otra vía, saltado o borrado) la
+// fila se cierra como 'done'. fromQueue=true evita re-encolar en un nuevo agotamiento.
+async function runVerifyQueue(svc: FlowDayClient): Promise<number> {
+  const { data: rows } = await svc
+    .from('verification_queue')
+    .select('id, user_id, block_id, photo_path, attempts')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true })
+    .limit(QUEUE_BATCH);
+
+  let verified = 0;
+  for (const row of rows ?? []) {
+    const { data: block } = await svc
+      .from('blocks')
+      .select('status, type, label')
+      .eq('id', row.block_id)
+      .maybeSingle();
+
+    if (!block || block.status !== 'awaiting_photo') {
+      await svc
+        .from('verification_queue')
+        .update({ status: 'done', updated_at: new Date().toISOString() })
+        .eq('id', row.id);
+      continue;
+    }
+
+    try {
+      await verifyPhoto({
+        userId: row.user_id,
+        blockId: row.block_id,
+        photoPath: row.photo_path,
+        blockType: block.type,
+        taskName: block.label,
+        fromQueue: true,
+      });
+      await svc
+        .from('verification_queue')
+        .update({ status: 'done', updated_at: new Date().toISOString() })
+        .eq('id', row.id);
+      verified++;
+    } catch (e) {
+      // Visión aún agotada (u otro fallo): deja la fila para el próximo ciclo; tras
+      // QUEUE_MAX_ATTEMPTS se marca 'failed' para no reintentar indefinidamente.
+      const attempts = row.attempts + 1;
+      await svc
+        .from('verification_queue')
+        .update({
+          attempts,
+          last_error: e instanceof AppError ? e.code : 'internal',
+          status: attempts >= QUEUE_MAX_ATTEMPTS ? 'failed' : 'pending',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.id);
+    }
+  }
+  return verified;
 }

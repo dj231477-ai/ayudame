@@ -48,8 +48,9 @@ export async function checkAndDeductCredits(
     .single();
 
   if (logErr || !log) {
-    // Cobramos pero no pudimos registrar el consumo: reembolsa y trata como fallo del sistema (§C-9.6).
-    await db.rpc('refund_credits', { p_user_id: userId, p_amount: cost, p_usage_log_id: null });
+    // Cobramos pero no pudimos registrar el consumo: revierte el saldo y trata como fallo del
+    // sistema (§C-9.6). No hay fila usage_log que marcar, así que se omite p_usage_log_id.
+    await db.rpc('refund_credits', { p_user_id: userId, p_amount: cost });
     logger.error({ event: 'credits.usage_log_insert_failed', user_id: userId, error: { code: 'internal' } });
     throw new AppError('internal');
   }

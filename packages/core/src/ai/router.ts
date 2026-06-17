@@ -20,29 +20,29 @@ import { dispatchOllama } from './providers/ollama';
 import { dispatchClaude } from './providers/claude';
 
 // Umbrales por debajo del límite real para dejar margen de seguridad (§C-10.6).
-const VISION_GEMINI_LIMIT = 1400;
 const TEXT_GROQ_LIMIT = 900;
 const TEXT_CEREBRAS_TOKEN_LIMIT = 900_000;
 
 /** Selección de proveedor [NORMATIVO §C-10.3]. Visión SOLO cloud; nunca Ollama (INV-7). */
-export async function getAIProvider(modality: AIModality): Promise<AIProvider> {
+export async function getAIProvider(modality: AIModality, userId?: string): Promise<AIProvider> {
   if (modality === 'vision') {
-    if ((await getDailyUsage('gemini')) < VISION_GEMINI_LIMIT) {
-      return { provider: 'gemini', model: 'gemini-2.5-flash' };
-    }
-    if (process.env.ANTHROPIC_API_KEY) {
-      return { provider: 'claude', model: 'claude-sonnet-4-6' };
-    }
-    throw new AppError('ai_vision_exhausted'); // degradación explícita (§C-14.3)
+    // Siempre Gemini Flash para todos los usuarios (INV-7).
+    return { provider: 'gemini', model: 'gemini-2.5-flash' };
   }
-  // Texto: rotación por cuota diaria.
+  // Texto fundador: Ollama local qwen3:8b (sin consumir cuota cloud).
+  // Se lee en runtime para que tests y hot-reload funcionen correctamente.
+  const founderUserId = process.env.FOUNDER_USER_ID;
+  if (founderUserId && userId === founderUserId) {
+    return { provider: 'ollama', model: 'qwen3:8b' };
+  }
+  // Texto usuarios: rotación por cuota diaria.
   if ((await getDailyUsage('groq')) < TEXT_GROQ_LIMIT) {
     return { provider: 'groq', model: 'llama-3.3-70b-versatile' };
   }
   if ((await getDailyUsage('cerebras')) < TEXT_CEREBRAS_TOKEN_LIMIT) {
     return { provider: 'cerebras', model: 'llama3.1-70b' };
   }
-  return { provider: 'ollama', model: 'mistral:7b-instruct-q4_K_M' }; // best-effort, fuera de ruta crítica
+  return { provider: 'ollama', model: 'qwen3:8b' }; // best-effort, fuera de ruta crítica
 }
 
 const DISPATCH: Record<AIProvider['provider'], ProviderDispatch> = {
@@ -66,7 +66,7 @@ export async function callAI(
   action: ActionKey,
   req: AIRequest,
 ): Promise<CallAIResult> {
-  const provider = await getAIProvider(req.modality); // puede lanzar ai_vision_exhausted (antes de cobrar)
+  const provider = await getAIProvider(req.modality, userId);
   // S5: burst guard global por proveedor; degrada graceful si Upstash no está (§C-11.1).
   const providerLimit = await limitProvider(provider.provider);
   if (!providerLimit.success) throw new AppError('rate_limited');
