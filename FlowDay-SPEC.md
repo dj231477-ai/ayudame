@@ -1095,11 +1095,13 @@ El `VERIFY_PROMPT` (§C-13.4) recibe el nombre de tarea como `userData`, nunca i
 
 | Proveedor | Modalidad | Modelo | Cuota free (referencia) | Rol |
 |-----------|-----------|--------|--------------------------|-----|
-| Gemini | visión+texto | gemini-2.5-flash | ~1.500 req/día | Visión primaria (única por defecto) |
+| Gemini | visión | gemini-2.5-flash | ~1.500 req/día | Visión primaria (única por defecto) |
 | Groq | texto | llama-3.3-70b-versatile | ~1.000 req/día | Texto primario |
 | Cerebras | texto | llama3.1-70b | ~1M tokens/día | Overflow texto |
 | Ollama | texto | qwen3:8b | ilimitado (CPU/VM) | Respaldo texto + texto del fundador |
 | MiniMax | visión | MiniMax-M3 | de pago | Fallback de pago de visión (tras 50 usuarios, D-2) |
+
+La columna "Modalidad" describe el **uso real en producción**, no las capacidades del modelo. Nota técnica: `gemini-2.5-flash` soporta también texto, pero el router (§C-10.3) lo invoca **únicamente para visión** (verificación de fotos); el texto se enruta a Groq/Cerebras/Ollama.
 
 Las cuotas reales se confirman contra cada proveedor; los umbrales del router (§C-10.3) se mantienen por debajo del límite para dejar margen de seguridad.
 
@@ -1953,3 +1955,23 @@ Cuando el usuario edita manualmente tareas/eventos/bloques, **no** se dispara IA
 **Extra (no-auditoría):** enrutado de texto del fundador a Ollama `qwen3:8b` y visión siempre Gemini (`1043654`).
 
 **Verificación:** typecheck verde · tests 9 passed / 5 skipped (RLS integration, requiere entorno).
+
+### Spec v2.1 + puesta en marcha de n8n (2026-06-21, rama `docs/spec-v2.1`)
+
+**Spec:** subida a v2.1 sincronizando con el código real (visión siempre Gemini sin Claude; Contabo VPS; `qwen3:8b`; migraciones 011/012/104/105) + nuevas §C-25 (decisiones de arquitectura) y §C-26 (auto-organización Calendar/Tasks). Claude eliminado como código muerto. Gemini reclasificado a modalidad "visión" en §C-10.6. PRs #1–#3 mergeados a `master`.
+
+**n8n — diagnóstico y arreglo (deploy real funcional):**
+
+| # | Tarea | Estado |
+|---|-------|--------|
+| 1 | `APP_URL` corregido en `/opt/services/n8n/.env`: `flowday.app` (placeholder, no resolvía) → `https://ayudame-flowday.vercel.app` | ✅ |
+| 2 | Endpoint `/internal/ai-usage/reconcile` creado (§C-12.2): normaliza `ai_daily_usage` contra `usage_log`; protegido con `INTERNAL_ADMIN_SECRET`. Desplegado en Vercel (PR #3). Responde 200 | ✅ `75eda30` |
+| 3 | **Causa raíz** de todos los fallos: n8n bloqueaba `{{$env.APP_URL}}` (`ExpressionError: access to env vars denied`). Fix: `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` en el docker-compose de n8n + recreación del contenedor | ✅ |
+| 4 | `verify-queue.json` importado y activado en `n8n-n8n-1` (id `dy70E1xTTcskWlmk`) | ✅ |
+
+**Verificación end-to-end:** los **8 workflows** del proyecto pasan de `error` a `success` por sus triggers programados (ai-usage-tracker, daily-reset, daily-schedule, data-cleanup, monetization, morning-briefing, photo-reminder, verify-queue). Los 8 endpoints `/internal/*` responden 200 con secreto.
+
+**Notas:**
+- `ai-usage-tracker` ya no 404ea (endpoint creado).
+- `Yleis - Lead Enrichment Pipeline` (otro proyecto del fundador en la misma instancia n8n) se deja activo e intacto.
+- El docker-compose del repo (`apps/flowday/docker/oracle/`) refleja `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` para reproducibilidad.
