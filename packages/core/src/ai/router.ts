@@ -17,7 +17,6 @@ import { dispatchGemini } from './providers/gemini';
 import { dispatchGroq } from './providers/groq';
 import { dispatchCerebras } from './providers/cerebras';
 import { dispatchOllama } from './providers/ollama';
-import { dispatchClaude } from './providers/claude';
 
 // Umbrales por debajo del límite real para dejar margen de seguridad (§C-10.6).
 const TEXT_GROQ_LIMIT = 900;
@@ -26,7 +25,9 @@ const TEXT_CEREBRAS_TOKEN_LIMIT = 900_000;
 /** Selección de proveedor [NORMATIVO §C-10.3]. Visión SOLO cloud; nunca Ollama (INV-7). */
 export async function getAIProvider(modality: AIModality, userId?: string): Promise<AIProvider> {
   if (modality === 'vision') {
-    // Siempre Gemini Flash para todos los usuarios (INV-7).
+    // Siempre Gemini Flash; sin fallback Claude (eliminado, D-2). Visión nunca a Ollama (INV-7).
+    // La cuota agotada se maneja en dispatch (Gemini 429 -> ai_vision_exhausted -> verification_queue, §C-14.3).
+    // Fallback de pago MiniMax M3 se añade al activar el flag vision_paid_fallback_active (D-2, §C-25/§C-10.3).
     return { provider: 'gemini', model: 'gemini-2.5-flash' };
   }
   // Texto fundador: Ollama local qwen3:8b (sin consumir cuota cloud).
@@ -50,7 +51,6 @@ const DISPATCH: Record<AIProvider['provider'], ProviderDispatch> = {
   groq: dispatchGroq,
   cerebras: dispatchCerebras,
   ollama: dispatchOllama,
-  claude: dispatchClaude,
 };
 
 /**

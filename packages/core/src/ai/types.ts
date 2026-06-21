@@ -4,7 +4,8 @@
 // =============================================================================
 
 export type AIModality = 'vision' | 'text';
-export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama' | 'claude';
+// 'minimax' se añadirá al activar el fallback de pago de visión (D-2, §C-25). Hoy: 4 proveedores.
+export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama';
 
 export interface AIProvider {
   provider: AIProviderName;

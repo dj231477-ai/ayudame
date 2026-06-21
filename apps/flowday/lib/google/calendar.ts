@@ -2,8 +2,9 @@ import 'server-only';
 import { getValidAccessToken } from './tokens';
 
 // Google Calendar (lectura) — Pro+. SPEC §C-1.2 #8 (ajuste de bloques a reuniones).
-// Solo lectura de eventos próximos; el reagendado automático queda fuera (algoritmo no
-// especificado en el SPEC: se difiere para no inventar comportamiento).
+// Solo lectura de eventos próximos. La auto-organización (eventos con hora -> bloques sin IA,
+// tareas sin hora -> encaje con IA, cache por hash, 1x/día vía morning-briefing, debounce 30s)
+// está especificada en §C-26 y pendiente de implementación.
 const CAL_API = 'https://www.googleapis.com/calendar/v3';
 
 export interface CalEvent {

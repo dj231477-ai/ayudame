@@ -9,7 +9,6 @@ vi.mock('./usage', () => ({
     groq: 'requests',
     cerebras: 'tokens',
     ollama: 'requests',
-    claude: 'requests',
   },
 }));
 
