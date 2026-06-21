@@ -18,12 +18,10 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
-      # Permite {{$env.X}} en las expresiones de los nodos. Sin esto, n8n lanza
-      # "ExpressionError: access to env vars denied" y los workflows fallan (§C-12.2).
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      # Variables usadas por los workflows (no son secretos de la app de producto):
-      - APP_URL=${APP_URL}
-      - INTERNAL_ADMIN_SECRET=${INTERNAL_ADMIN_SECRET}
+      # Bloquea {{$env.X}} en las expresiones de los nodos (hardening D-6). Los workflows
+      # ya no dependen de $env: APP_URL está hardcodeada y el secreto vive en credencial
+      # nativa de n8n (ver apps/flowday/n8n/setup-credentials.sh).
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
       - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
     deploy:
       resources:

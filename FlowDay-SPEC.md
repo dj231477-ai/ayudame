@@ -1974,4 +1974,23 @@ Cuando el usuario edita manualmente tareas/eventos/bloques, **no** se dispara IA
 **Notas:**
 - `ai-usage-tracker` ya no 404ea (endpoint creado).
 - `Yleis - Lead Enrichment Pipeline` (otro proyecto del fundador en la misma instancia n8n) se deja activo e intacto.
-- El docker-compose del repo (`apps/flowday/docker/oracle/`) refleja `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` para reproducibilidad.
+
+### Hardening D-6: credencial nativa + bloqueo de `$env` (2026-06-21)
+
+El fix anterior (`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`) dejaba `INTERNAL_ADMIN_SECRET` legible vía
+`$env` por cualquier workflow de la instancia (incluyendo `Yleis`, del fundador). Se cerró esa
+superficie:
+
+| # | Tarea | Estado |
+|---|-------|--------|
+| 1 | `APP_URL` hardcodeada en los 8 workflows (`https://ayudame-flowday.vercel.app`); ya no usan `{{$env.APP_URL}}` | ✅ |
+| 2 | Secreto movido a credencial nativa `httpHeaderAuth` (`FlowDay Internal Admin`, id `FLOWDAYADMIN0001`, cabecera `x-internal-secret`), creada vía `apps/flowday/n8n/setup-credentials.sh`; los 8 workflows referencian `credentials.httpHeaderAuth` en vez de `$env.INTERNAL_ADMIN_SECRET` | ✅ |
+| 3 | `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` (vuelve a bloquear `$env`) y `APP_URL`/`INTERNAL_ADMIN_SECRET` eliminadas del `environment` del contenedor `n8n` en `/opt/services/n8n/docker-compose.yml` y `apps/flowday/docker/oracle/docker-compose.yml` | ✅ |
+| 4 | Reimport de los 8 workflows en `n8n-n8n-1` con la credencial nativa; limpieza de los 8 workflows duplicados que generó el reimport (los JSON no llevan `id` de workflow a nivel raíz, así que el reimport crea copias en vez de actualizar in-place) | ✅ |
+
+**Verificación:** los 8 workflows (`ai-usage-tracker`, `daily-reset`, `daily-schedule`,
+`data-cleanup`, `monetization`, `morning-briefing`, `photo-reminder`, `verify-queue`) ejecutados
+y confirmados en `success` en `execution_entity` entre 2026-06-21 20:38–20:45 UTC, ya con
+`$env` bloqueado y la credencial nativa.
+
+- El docker-compose del repo (`apps/flowday/docker/oracle/`) refleja `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` para reproducibilidad.

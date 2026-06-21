@@ -15,18 +15,19 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.APP_URL}}/internal/cleanup/run",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
-        },
+        "url": "https://ayudame-flowday.vercel.app/internal/cleanup/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": { "timeout": 290000 }
       },
       "id": "call-cleanup",
       "name": "POST /internal/cleanup/run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 300]
+      "position": [520, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "FLOWDAYADMIN0001", "name": "FlowDay Internal Admin" }
+      }
     }
   ],
   "connections": {
