@@ -15,18 +15,19 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.APP_URL}}/internal/ai-usage/reconcile",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
-        },
+        "url": "https://ayudame-flowday.vercel.app/internal/ai-usage/reconcile",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": { "timeout": 30000 }
       },
       "id": "call-ai-usage",
       "name": "POST /internal/ai-usage/reconcile",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 300]
+      "position": [520, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "FLOWDAYADMIN0001", "name": "FlowDay Internal Admin" }
+      }
     }
   ],
   "connections": {
