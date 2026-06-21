@@ -829,7 +829,7 @@ export type Plan = 'free' | 'pro' | 'team';
 export type SubscriptionStatus = 'active' | 'past_due' | 'canceled' | 'trialing';
 export type BlockType = 'deep' | 'admin' | 'body' | 'rest' | 'review';
 export type BlockStatus = 'pending' | 'active' | 'awaiting_photo' | 'verified' | 'skipped';
-export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama' | 'claude';
+export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama';
 export type UsageAction =
   | 'photo_verify'
   | 'chat_message'

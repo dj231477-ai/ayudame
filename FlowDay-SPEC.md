@@ -4,7 +4,9 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.0 · **Fecha:** Junio 2026 · **Estado:** listo para construcción.
+> **Versión:** 2.1 · **Fecha:** Junio 2026 · **Estado:** en producción.
+>
+> **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 
 ---
 
@@ -44,6 +46,8 @@
 - C-22. Roadmap por fases
 - C-23. Glosario y referencias cruzadas
 - C-24. Apéndice: variables de entorno canónicas
+- C-25. Decisiones de arquitectura
+- C-26. Auto-organización de Calendar/Tasks (Pro+)
 
 ---
 
@@ -257,7 +261,7 @@ Un **invariante** es una propiedad que debe ser verdadera en todo momento, en to
 
 ### C-2.1. Versionado
 
-- **Spec:** versionado semántico `MAJOR.MINOR`. Cambios incompatibles de contrato ⇒ MAJOR. Este documento es 2.0.
+- **Spec:** versionado semántico `MAJOR.MINOR`. Cambios incompatibles de contrato ⇒ MAJOR. Este documento es 2.1.
 - **API interna:** versionada por prefijo de ruta `/api/v1/...` (§C-11.1). Deprecación con período de gracia mínimo de una versión MINOR.
 - **Migraciones:** numeración monotónica creciente; nunca se reordena.
 
@@ -308,8 +312,8 @@ Una unidad de trabajo está "hecha" cuando: (a) cumple su criterio de aceptació
 
 - **AR-1. Frontend y backend en un solo Next.js** desplegado en Vercel; el backend son API Routes. No hay servidor monolítico aparte.
 - **AR-2. Base de datos gestionada (Supabase/Postgres).** No se administra Postgres de producto a mano.
-- **AR-3. Orquestación self-hosted (n8n en Oracle Always Free).** n8n no toma decisiones de negocio complejas; dispara endpoints y mueve datos. La lógica vive en la app.
-- **AR-4. IA gratuita primero.** Proveedores cloud con free tier (Gemini, Groq, Cerebras, OpenRouter) y Ollama local como respaldo de texto. Claude API solo como fallback opcional de visión.
+- **AR-3. Orquestación self-hosted (n8n en Contabo VPS).** n8n no toma decisiones de negocio complejas; dispara endpoints y mueve datos. La lógica vive en la app. (El despliegue original previsto era Oracle Always Free; en producción se usa Contabo VPS — ver §C-25 D-5 y PROGRESO.)
+- **AR-4. IA gratuita primero.** Proveedores cloud con free tier (Gemini, Groq, Cerebras, OpenRouter) y Ollama local como respaldo de texto. Visión: Gemini primario; **MiniMax M3** como fallback de pago a escala (D-2). No se usa Claude.
 - **AR-5. Pagos vía Stripe.** Único procesador. Stripe Tax para IVA. Stripe es la autoridad de estado de suscripción y de compras.
 - **AR-6. Push vía Web Push (VAPID) + FCM.** Sin dependencia de Telegram/WhatsApp.
 - **AR-7. Monorepo con Turborepo.** Desde el día 1; no se migra después.
@@ -350,8 +354,8 @@ flowday-platform/
 │   │   │   │   ├── gemini.ts         # visión + texto
 │   │   │   │   ├── groq.ts           # texto
 │   │   │   │   ├── cerebras.ts       # texto
-│   │   │   │   ├── ollama.ts         # texto (best-effort)
-│   │   │   │   └── claude.ts         # fallback visión (opcional)
+│   │   │   │   └── ollama.ts         # texto (best-effort, qwen3:8b)
+│   │   │   │   # minimax.ts          # (futuro) fallback de pago de visión — se añade al activar D-2 (§C-25)
 │   │   │   └── types.ts              # AIProvider, AIRequest, AIResponse
 │   │   ├── billing/
 │   │   │   └── stripe.ts             # cliente Stripe + helpers
@@ -384,7 +388,9 @@ flowday-platform/
 │       │   ├── 007_feature_flags.sql
 │       │   ├── 008_subscriptions.sql
 │       │   ├── 009_processed_events.sql
-│       │   └── 010_rpc_functions.sql # deduct_credits, increment_ai_usage, get_platform_metrics, ...
+│       │   ├── 010_rpc_functions.sql # deduct_credits, increment_ai_usage, get_platform_metrics, ...
+│       │   ├── 011_idempotent_credit_purchase.sql # idempotencia de compra (evita doble crédito)
+│       │   └── 012_refund_credits_optional_log.sql # refund_credits con usage_log_id opcional
 │       ├── views/
 │       │   └── public_profiles.sql
 │       └── storage/
@@ -412,7 +418,9 @@ flowday-platform/
     │   │   ├── 100_blocks.sql
     │   │   ├── 101_evidence.sql
     │   │   ├── 102_habits.sql
-    │   │   └── 103_challenges.sql
+    │   │   ├── 103_challenges.sql
+    │   │   ├── 104_verification_queue.sql # cola de reverificación cuando Gemini agota cuota (§C-14.3)
+    │   │   └── 105_google_tokens.sql       # refresh tokens de Google cifrados (AES-256-GCM, D-4)
     │   ├── n8n/workflows/            # exports JSON (ver §C-12)
     │   ├── public/                   # manifest.json, sw.js, icons/, screenshots/
     │   └── docker/oracle/            # docker-compose.yml + nginx.conf (ver §C-16)
@@ -478,14 +486,14 @@ Los `package.json` de `@flowday/core` y `@flowday/ui` exponen subpaths por `expo
 | Auth | Supabase Auth (OAuth Google) | Identidad | $0 hasta 50k MAU |
 | DB producto | Supabase (PostgreSQL) | Datos + realtime | $0 free tier |
 | Storage | Supabase Storage | Fotos de evidencia | $0 hasta 1 GB |
-| Orquestación | n8n self-hosted | Cron, webhooks, sync | $0 (Oracle) |
-| Host n8n | Oracle Cloud Always Free (ARM A1) | 4 OCPU / 24 GB / 200 GB | $0 permanente |
-| IA visión | Gemini 2.5 Flash (primario), Claude API (fallback opcional) | Verificar fotos | $0 free tier / pago opcional |
-| IA texto | Groq 70B → Cerebras → Ollama local | Chat, briefings, embeddings | $0 |
+| Orquestación | n8n self-hosted | Cron, webhooks, sync | bajo (Contabo) |
+| Host n8n | Contabo VPS (x86_64) | 6 vCPU / 12 GB / 96 GB · Ubuntu 24.04 | ~$8/mes (ver §C-25 / PROGRESO) |
+| IA visión | Gemini 2.5 Flash (primario), MiniMax M3 (fallback de pago, tras 50 usuarios; D-2) | Verificar fotos | $0 free tier / pago a escala |
+| IA texto | Groq 70B → Cerebras → Ollama `qwen3:8b` (fundador siempre Ollama) | Chat, briefings, embeddings | $0 |
 | Pagos | Stripe (+ Stripe Tax) | Suscripciones y créditos | 2.9% + $0.30/tx |
 | Push | Web Push (VAPID) + FCM | Notificaciones | $0 |
 | Proxy/SSL | Nginx + Let's Encrypt | HTTPS para n8n | $0 |
-| Contenedores | Docker + Compose | Reproducibilidad en Oracle | $0 |
+| Contenedores | Docker + Compose | Reproducibilidad en Contabo VPS | $0 |
 | Monorepo | Turborepo | Build pipeline | $0 |
 | Integraciones | Google Tasks API, Google Calendar API | Tareas y agenda | $0 |
 
@@ -983,7 +991,8 @@ El router vive en `@flowday/core/ai`. **n8n nunca elige proveedor**; cuando n8n 
 ```typescript
 // packages/core/ai/types.ts
 export type AIModality = 'vision' | 'text';
-export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama' | 'claude';
+// 'minimax' se añade al activar el fallback de pago de visión (D-2, §C-25); hoy el código vive con los 4 primeros.
+export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama' | 'minimax';
 export interface AIProvider { provider: AIProviderName; model: string; }
 export interface AIRequest {
   modality: AIModality;
@@ -997,21 +1006,42 @@ export interface AIResponse { text: string; provider: AIProviderName; model: str
 
 ### C-10.3. Selección de proveedor [NORMATIVO]
 
+Reglas (sincronizadas con el código real en 2.1):
+
+- **Visión = siempre Gemini.** No hay fallback a Claude (eliminado, D-2). La degradación por cuota **no** se decide en el router: si Gemini agota cuota responde 429 en el *dispatch*, que se traduce a `AppError('ai_vision_exhausted')` y encola la verificación en `verification_queue` (§C-14.3). Visión **nunca** cae a Ollama (INV-7).
+- **Fallback de pago de visión (D-2, §C-25):** tras superar 50 usuarios se activa el flag `vision_paid_fallback_active` y, cuando Gemini agota su cuota diaria, se enruta a **MiniMax M3** (modelo de pago que soporta visión) en lugar de encolar. Con el flag desactivado el comportamiento es "siempre Gemini" (estado actual).
+- **Texto del fundador:** si `userId === FOUNDER_USER_ID`, siempre Ollama local `qwen3:8b` (no consume cuota cloud).
+- **Texto de usuarios:** rotación por cuota diaria Groq → Cerebras → Ollama `qwen3:8b` (best-effort, fuera de ruta crítica).
+
 ```typescript
 // packages/core/ai/router.ts
 import { getDailyUsage } from './usage';
+import { flag } from '../flags';
 
-export async function getAIProvider(modality: AIModality): Promise<AIProvider> {
+const GEMINI_VISION_LIMIT = 1400;
+const TEXT_GROQ_LIMIT = 900;
+const TEXT_CEREBRAS_TOKEN_LIMIT = 900_000;
+
+export async function getAIProvider(modality: AIModality, userId?: string): Promise<AIProvider> {
   if (modality === 'vision') {
-    // Visión SOLO en proveedores cloud con visión. NUNCA Ollama (INV-7).
-    if (await getDailyUsage('gemini') < 1400) return { provider: 'gemini', model: 'gemini-2.5-flash' };
-    if (process.env.ANTHROPIC_API_KEY)        return { provider: 'claude', model: 'claude-sonnet-4-6' };
-    throw new AppError('ai_vision_exhausted'); // degradación explícita (§C-14.3)
+    // Visión SOLO cloud; NUNCA Ollama (INV-7). Siempre Gemini; sin fallback Claude (D-2).
+    if (await flag('vision_paid_fallback_active')) {
+      // Tras 50 usuarios (D-2): si Gemini agota cuota, fallback de pago MiniMax M3 (soporta visión).
+      if ((await getDailyUsage('gemini')) >= GEMINI_VISION_LIMIT) {
+        return { provider: 'minimax', model: 'MiniMax-M3' };
+      }
+    }
+    // Flag off ⇒ siempre Gemini; la cuota agotada se maneja en dispatch (429 → ai_vision_exhausted, §C-14.3).
+    return { provider: 'gemini', model: 'gemini-2.5-flash' };
   }
-  // Texto: rotación por cuota diaria.
-  if (await getDailyUsage('groq')     < 900)     return { provider: 'groq',     model: 'llama-3.3-70b-versatile' };
-  if (await getDailyUsage('cerebras') < 900_000) return { provider: 'cerebras', model: 'llama3.1-70b' };
-  return { provider: 'ollama', model: 'mistral:7b-instruct-q4_K_M' }; // best-effort, fuera de ruta crítica
+  // Texto fundador: Ollama local qwen3:8b (sin consumir cuota cloud).
+  if (process.env.FOUNDER_USER_ID && userId === process.env.FOUNDER_USER_ID) {
+    return { provider: 'ollama', model: 'qwen3:8b' };
+  }
+  // Texto usuarios: rotación por cuota diaria.
+  if ((await getDailyUsage('groq'))     < TEXT_GROQ_LIMIT)          return { provider: 'groq',     model: 'llama-3.3-70b-versatile' };
+  if ((await getDailyUsage('cerebras')) < TEXT_CEREBRAS_TOKEN_LIMIT) return { provider: 'cerebras', model: 'llama3.1-70b' };
+  return { provider: 'ollama', model: 'qwen3:8b' }; // best-effort, fuera de ruta crítica
 }
 ```
 
@@ -1065,17 +1095,17 @@ El `VERIFY_PROMPT` (§C-13.4) recibe el nombre de tarea como `userData`, nunca i
 
 | Proveedor | Modalidad | Modelo | Cuota free (referencia) | Rol |
 |-----------|-----------|--------|--------------------------|-----|
-| Gemini | visión+texto | gemini-2.5-flash | ~1.500 req/día | Visión primaria |
+| Gemini | visión+texto | gemini-2.5-flash | ~1.500 req/día | Visión primaria (única por defecto) |
 | Groq | texto | llama-3.3-70b-versatile | ~1.000 req/día | Texto primario |
 | Cerebras | texto | llama3.1-70b | ~1M tokens/día | Overflow texto |
-| Ollama | texto | mistral:7b-instruct-q4_K_M | ilimitado (CPU) | Respaldo texto, embeddings |
-| Claude | visión | claude-sonnet-4-6 | según plan | Fallback visión (opcional) |
+| Ollama | texto | qwen3:8b | ilimitado (CPU/VM) | Respaldo texto + texto del fundador |
+| MiniMax | visión | MiniMax-M3 | de pago | Fallback de pago de visión (tras 50 usuarios, D-2) |
 
 Las cuotas reales se confirman contra cada proveedor; los umbrales del router (§C-10.3) se mantienen por debajo del límite para dejar margen de seguridad.
 
 ### C-10.7. Degradación (resumen; detalle §C-14.3)
 
-- Visión agotada y sin Claude ⇒ `ai_vision_exhausted`: la app informa al usuario "verificación temporalmente no disponible, tu foto quedó guardada y se verificará pronto", encola la verificación, **no** cobra hasta verificar.
+- Visión agotada (Gemini sin cuota y sin fallback MiniMax activo) ⇒ `ai_vision_exhausted`: la app informa al usuario "verificación temporalmente no disponible, tu foto quedó guardada y se verificará pronto", encola la verificación en `verification_queue`, **no** cobra hasta verificar. Con `vision_paid_fallback_active` (D-2) el sistema enruta a MiniMax M3 en vez de encolar.
 - Texto: siempre hay Ollama como último recurso (degradación de calidad/latencia, no de disponibilidad), salvo que esté fuera de ruta crítica de usuario.
 
 
@@ -1321,7 +1351,7 @@ Los errores técnicos nunca se muestran crudos; siempre se mapean (M4/R15).
 
 ### C-14.3. Degradación de IA [NORMATIVO]
 
-- **Visión agotada (sin Claude):** `verify-photo` responde 503 `ai_vision_exhausted`, **no cobra**, marca la evidencia como "pendiente de verificación" y encola un reintento (cola simple: tabla o reproceso por n8n). Cuando haya cuota, se verifica y entonces se cobra.
+- **Visión agotada (Gemini sin cuota, fallback MiniMax inactivo):** `verify-photo` responde 503 `ai_vision_exhausted`, **no cobra**, marca la evidencia como "pendiente de verificación" y encola un reintento en `verification_queue` (drenada por n8n / job interno). Cuando haya cuota, se verifica y entonces se cobra. Con `vision_paid_fallback_active` (D-2) se usa MiniMax M3 y no se encola.
 - **Texto:** si cloud agotado, cae a Ollama (latencia/calidad menor) salvo que sea ruta crítica con SLA; en ese caso responde `ai_vision_exhausted`-equivalente para texto crítico.
 
 ### C-14.4. Otros casos límite
@@ -1380,7 +1410,7 @@ export const RETENTION_DAYS = {
 
 ### C-15.6. Uso de IA y datos
 
-Las fotos se envían a proveedores de IA (Gemini/Claude) solo para verificación, vía URL firmada efímera, y no se usan para entrenar (según términos del proveedor). Esto se declara en Privacy.
+Las fotos se envían a proveedores de IA (Gemini; y MiniMax M3 cuando el fallback de pago está activo, D-2) solo para verificación, vía URL firmada efímera, y no se usan para entrenar (según términos del proveedor). Esto se declara en Privacy.
 
 ---
 
@@ -1393,21 +1423,24 @@ Las fotos se envían a proveedores de IA (Gemini/Claude) solo para verificación
                                    │            │
                           [ Supabase: Postgres + Auth + Storage ]
                                    │
-[ Oracle Cloud Always Free VM (ARM A1) ]
-   docker compose:
+[ Contabo VPS (x86_64) ]
+   docker compose (red docker `flowday`):
      - n8n            (orquestación; su propio Postgres interno)
      - postgres       (solo para n8n; INV-8)
-     - ollama         (texto best-effort; nunca ruta crítica de visión)
+     - ollama         (texto best-effort, qwen3:8b; nunca ruta crítica de visión)
      - nginx + certbot (HTTPS para n8n y para exponer ollama internamente)
 ```
 
-### C-16.2. VM Oracle [NORMATIVO en specs]
+### C-16.2. VM de orquestación [NORMATIVO en specs]
 
 ```
-Instancia: VM.Standard.A1.Flex (ARM64)
-OCPUs: 4 · RAM: 24 GB · Disco: 200 GB · OS: Ubuntu 22.04 LTS · IP pública incluida
+Proveedor: Contabo VPS (x86_64)
+vCPU: 6 · RAM: 12 GB · Disco: 96 GB · OS: Ubuntu 24.04 LTS · IP pública incluida
+Dominio n8n: https://n8ndavid.favorme.shop (Let's Encrypt)
 ```
-Presupuesto de RAM (referencia): n8n+Postgres ~5 GB, Ollama 7B ~4.5 GB, SO ~2 GB, libre ~12.5 GB.
+Presupuesto de RAM (referencia): n8n+Postgres ~5 GB, Ollama `qwen3:8b` ~5.2 GB (límite 7 GB), SO ~1.5 GB.
+
+> El diseño original (2.0) preveía Oracle Cloud Always Free (ARM A1, 24 GB/4 OCPU). En producción se usa **Contabo VPS x86** (D-5, §C-25); los límites de recursos del docker-compose se ajustaron proporcionalmente. La ruta canónica del compose permanece `apps/flowday/docker/oracle/` por compatibilidad histórica (no se renombra para no romper referencias; INV-9).
 
 ### C-16.3. docker-compose (ruta canónica `apps/flowday/docker/oracle/`) [ILUSTRATIVO]
 
@@ -1466,7 +1499,7 @@ Ollama se expone **solo** a la app (red privada/VPN o regla de firewall que perm
 | Google OAuth redirect | `https://flowday.app/auth/callback` | Google Cloud Console |
 | Stripe webhook | `https://flowday.app/api/v1/billing/webhook` | Stripe → Webhooks |
 | n8n webhook (a la app) | `https://flowday.app/api/v1/webhooks/n8n` | n8n workflows |
-| n8n público (panel) | `https://n8n.flowday.app` | Nginx en Oracle |
+| n8n público (panel) | `https://n8ndavid.favorme.shop` | Nginx en Contabo VPS |
 | PWA start_url | `/` | `public/manifest.json` |
 
 Cuando se fije el dominio real, find+replace único de `flowday.app`. Nunca mezclar dominios.
@@ -1478,7 +1511,7 @@ Cuando se fije el dominio real, find+replace único de `flowday.app`. Nunca mezc
 | Vercel bandwidth | 100 GB/mes | Plan Pro de Vercel |
 | Supabase DB | 500 MB | Plan Supabase Pro |
 | Supabase Storage | 1 GB | Retención agresiva (§C-15) + plan |
-| Gemini/Groq cuota | límites diarios | Activar Claude fallback / plan de pago del proveedor |
+| Gemini/Groq cuota | límites diarios | Activar fallback de pago MiniMax M3 (D-2) / plan de pago del proveedor |
 
 ---
 
@@ -1662,7 +1695,7 @@ Stripe como único procesador; Stripe Tax para IVA. Precios mostrados en la **mo
 - **DoD:** ciclo completo de un bloque hasta `verified`, con cobro de crédito y streak.
 
 ### Fase 2 — Automatización (n8n + push + Google Tasks)
-- VM Oracle + docker-compose (n8n + Postgres + Ollama + Nginx + SSL).
+- VM de orquestación (Contabo VPS) + docker-compose (n8n + Postgres + Ollama + Nginx + SSL).
 - Workflows `daily-schedule`, `photo-reminder`, `morning-briefing` con firmas y idempotencia.
 - Push completo (iOS/Android) + recordatorios.
 - Google Tasks sync bidireccional.
@@ -1718,7 +1751,7 @@ GOOGLE_GEMINI_API_KEY=
 GROQ_API_KEY=
 CEREBRAS_API_KEY=
 OPENROUTER_API_KEY=
-ANTHROPIC_API_KEY=                  # opcional: fallback de visión
+# MINIMAX_API_KEY=                  # (futuro) fallback de pago de visión MiniMax M3 — se añade al activar D-2
 
 # Web Push (VAPID)
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=
@@ -1730,9 +1763,17 @@ STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
 
+# Email transaccional (D-3: Resend). Si falta, Mailer degrada a no-op + log.
+RESEND_API_KEY=
+EMAIL_FROM=FlowDay <ops@flowday.app>
+
 # Orquestación
 N8N_WEBHOOK_SECRET=                 # HMAC para verificar eventos de n8n
 INTERNAL_ADMIN_SECRET=              # para /internal/* (monetization, cleanup)
+
+# Rate limiting (D-1: Upstash Redis, §C-11.1). Si faltan, degrada a "permitir" en dev.
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ```
 
 ### C-24.2. Específicas de FlowDay (`apps/flowday`)
@@ -1741,7 +1782,9 @@ INTERNAL_ADMIN_SECRET=              # para /internal/* (monetization, cleanup)
 NEXT_PUBLIC_APP_URL=https://flowday.app
 GOOGLE_CLIENT_ID=                   # OAuth Google Tasks/Calendar
 GOOGLE_CLIENT_SECRET=
-OLLAMA_BASE_URL=https://ollama-internal.flowday.app  # hostname privado de la VM Oracle (NO localhost desde Vercel)
+TOKEN_ENCRYPTION_KEY=               # D-4: cifra refresh tokens de Google (AES-256-GCM). SOLO backend.
+OLLAMA_BASE_URL=https://ollama-internal.flowday.app  # hostname privado de la VM (NO localhost desde Vercel)
+FOUNDER_USER_ID=                    # UUID del fundador en auth.users; activa Ollama qwen3:8b para texto (§C-10.3)
 STRIPE_PRICE_ID_STARTER=
 STRIPE_PRICE_ID_GROWTH=
 STRIPE_PRICE_ID_POWER=
@@ -1750,10 +1793,10 @@ STRIPE_PRICE_ID_PRO_YEARLY=
 STRIPE_PRICE_ID_TEAM=
 ```
 
-### C-24.3. Solo en la VM Oracle (no en Vercel)
+### C-24.3. Solo en la VM de orquestación — Contabo VPS (no en Vercel)
 
 ```bash
-DOMAIN=n8n.flowday.app
+DOMAIN=n8ndavid.favorme.shop
 POSTGRES_PASSWORD=
 N8N_USER=
 N8N_PASSWORD=
@@ -1763,7 +1806,71 @@ N8N_PASSWORD=
 
 ---
 
-*FlowDay — Especificación de Producción 2.0 · Single Source of Truth · Junio 2026.*
+## C-25. Decisiones de arquitectura
+
+> Registro de decisiones (ADR) que extienden o concretan el diseño base. Cumple R2: toda dependencia/elección añadida vive aquí, no solo en el código. Cada decisión es **[NORMATIVO]** salvo nota.
+
+### D-1. Rate limiting con Upstash Redis (§C-11.1, S5)
+
+El rate limiting por usuario y global por proveedor se implementa con **Upstash Redis** (REST, serverless-friendly desde Vercel). Variables: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` (§C-24.1). El módulo `@flowday/core/ratelimit` expone `limitUser` y `limitProvider`. **Degradación:** si faltan las variables (p. ej. en dev), el limiter degrada a "permitir" y lo registra; nunca bloquea por configuración ausente. `callAI` aplica `limitProvider` antes del pre-cobro (§C-10.4).
+
+### D-2. Fallback de pago de visión: MiniMax M3 (reemplaza a Claude)
+
+Se **elimina Claude** como fallback de visión (era código muerto: el router siempre usaba Gemini). Razón: simplificar a un único proveedor gratuito (Gemini) mientras la escala lo permita, y elegir un fallback de pago más económico cuando haga falta. **MiniMax M3** (soporta visión) es el fallback de pago, **activado tras 50 usuarios** mediante el flag `vision_paid_fallback_active` (`feature_flags`, §C-7.1). Con el flag desactivado el comportamiento es "siempre Gemini" y la cuota agotada se encola en `verification_queue` (§C-14.3). Al activar D-2: añadir `packages/core/ai/providers/minimax.ts`, `MINIMAX_API_KEY` (§C-24.1) y el valor `'minimax'` al tipo `AIProviderName` y al `DISPATCH`. Visión **nunca** usa Ollama (INV-7).
+
+### D-3. Email transaccional con Resend (§C-9.7)
+
+Los emails transaccionales (p. ej. `sendUpgradeEmail`) se envían con **Resend**. Variables: `RESEND_API_KEY`, `EMAIL_FROM` (§C-24.1). El módulo `@flowday/core/email` (Mailer) **degrada a no-op + log** si falta `RESEND_API_KEY`, de modo que dev/test no requieren proveedor real.
+
+### D-4. Cifrado de refresh tokens de Google (§C-8, INV-4)
+
+Los refresh tokens de Google (Tasks/Calendar) se almacenan **cifrados con AES-256-GCM** en `google_tokens` (migración `105_google_tokens.sql`), nunca en claro. La clave vive en `TOKEN_ENCRYPTION_KEY` (solo backend; §C-24.2) y el cifrado/descifrado en `@flowday/core/crypto`. El descifrado ocurre solo en backend al refrescar el access token (`lib/google/tokens.ts`).
+
+### D-5. VM de orquestación: Contabo VPS (reemplaza Oracle Always Free)
+
+La orquestación corre en un **Contabo VPS x86_64** (6 vCPU / 12 GB / 96 GB · Ubuntu 24.04) en lugar de Oracle Always Free (ARM A1). Razones: disponibilidad y simplicidad operativa. Los límites de recursos del `docker-compose` se ajustaron proporcionalmente; la ruta canónica `apps/flowday/docker/oracle/` se conserva por compatibilidad (no se renombra; INV-9). Detalle operativo en PROGRESO. *(Decisión registrada en 2.1; consecuencia de hecho, no contrato nuevo.)*
+
+---
+
+## C-26. Auto-organización de Calendar/Tasks (Pro+)
+
+> Feature Pro+ (§C-1.2 #8): la app propone un horario de bloques a partir de Google Tasks (qué hacer) y Google Calendar (cuándo hay ocupación fija). En 2.0 el algoritmo quedó deliberadamente fuera ("no especificado"); 2.1 lo especifica con foco en **coste de IA mínimo**. La IA solo se usa para el *encaje inteligente* de tareas sin hora en los huecos libres; todo lo determinista se resuelve sin IA.
+
+### C-26.1. Principios [NORMATIVO]
+
+1. **La IA es el último recurso, no el primero.** Lo que se puede derivar de los datos (eventos con hora exacta, huecos) no pasa por IA.
+2. **Una llamada de IA por día por usuario** en el caso normal (§C-26.4); el resto se sirve de cache.
+3. **Pre-cobro siempre (INV-2):** la reorganización con IA consume créditos como cualquier acción (`action: 'daily_briefing'` o una acción dedicada; usa `callAI`, §C-10.4).
+
+### C-26.2. Eventos con hora exacta → bloques directos (sin IA) [NORMATIVO]
+
+Un evento de Google Calendar con `start.dateTime` y `end.dateTime` (hora exacta, no all-day) se convierte **directamente** en un `block` (type `admin` o derivado del evento), sin pasar por IA. Solo las **tareas sin hora** (Google Tasks, o eventos all-day) se entregan a la IA para encajarlas en los huecos libres restantes. Esto reduce el input de IA y su coste.
+
+### C-26.3. Cache de reorganización con invalidación por hash [NORMATIVO]
+
+- El resultado de la reorganización se cachea por usuario y día.
+- La clave de invalidación es un **hash determinista de los datos fuente**: `sha256(canonical(tasks) + canonical(events) + date + tz)`. `canonical()` ordena y proyecta solo los campos relevantes (id, título, due/hora, estado) para que cambios irrelevantes no invaliden.
+- En cada disparo: se recalcula el hash; **si coincide con el cacheado, no se llama a la IA** (se devuelve el plan cacheado). Si difiere, se reorganiza y se guarda `{hash, plan, computed_at}`.
+- Ubicación de cache: tabla ligera o columna JSON por usuario (p. ej. `reorg_cache(user_id, date, source_hash, plan jsonb, computed_at)`); RLS propia de usuario (§C-8.2). Es **derivada/desechable**: puede regenerarse en cualquier momento.
+
+### C-26.4. Disparo principal: 1×/día vía morning-briefing [NORMATIVO]
+
+La reorganización principal corre **una vez al día** aprovechando el cron existente `morning-briefing` (§C-12.2, resuelto a ~05:00 local por la app). El endpoint de briefing, además del push, dispara la reorganización del día (respetando la cache §C-26.3: si el hash no cambió desde la última, no gasta IA). No se añade un cron nuevo.
+
+### C-26.5. Cambios manuales del usuario: debounce de 30 s [NORMATIVO]
+
+Cuando el usuario edita manualmente tareas/eventos/bloques, **no** se dispara IA inmediatamente. Se aplica un **debounce de 30 segundos**: el último cambio dentro de la ventana reinicia el temporizador; solo al expirar (sin nuevos cambios) se evalúa el hash (§C-26.3) y, si cambió, se reorganiza. Esto evita ráfagas de llamadas durante la edición. El debounce vive del lado cliente para la UX, y el servidor valida el hash antes de gastar IA (defensa en profundidad: aunque lleguen varias peticiones, el hash idéntico no recomputa).
+
+### C-26.6. Criterios de aceptación
+
+- Editar 5 tareas en 20 s produce **como máximo una** llamada de IA (tras el debounce), no cinco.
+- Un día sin cambios en tasks/events **no** consume créditos de reorganización (cache hit por hash).
+- Un evento de Calendar con hora exacta aparece como bloque sin haber invocado IA.
+- La reorganización diaria ocurre dentro del flujo de `morning-briefing`, sin cron adicional.
+
+---
+
+*FlowDay — Especificación de Producción 2.1 · Single Source of Truth · Junio 2026.*
 *Mantenida por el fundador. Cualquier cambio de contrato incrementa la versión (§C-2.1).*
 
 ---
