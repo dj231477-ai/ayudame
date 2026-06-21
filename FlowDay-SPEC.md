@@ -481,7 +481,7 @@ Los `package.json` de `@flowday/core` y `@flowday/ui` exponen subpaths por `expo
 |------|-----------|-----|-------|
 | Framework | Next.js 15 (App Router) | Frontend + API Routes | $0 (Vercel hobby) |
 | Lenguaje | TypeScript estricto | Todo el código | — |
-| PWA | `next-pwa` + manifest + SW | Instalable, offline básico | $0 |
+| PWA | Service worker manual (`public/sw.js`) + manifest | Instalable, offline básico | $0 |
 | UI | Tailwind CSS | Estilos mobile-first | $0 |
 | Auth | Supabase Auth (OAuth Google) | Identidad | $0 hasta 50k MAU |
 | DB producto | Supabase (PostgreSQL) | Datos + realtime | $0 free tier |
@@ -1014,36 +1014,38 @@ Reglas (sincronizadas con el código real en 2.1):
 - **Texto de usuarios:** rotación por cuota diaria Groq → Cerebras → Ollama `qwen3:8b` (best-effort, fuera de ruta crítica).
 
 ```typescript
-// packages/core/ai/router.ts
-import { getDailyUsage } from './usage';
-import { flag } from '../flags';
-
-const GEMINI_VISION_LIMIT = 1400;
+// packages/core/src/ai/router.ts (código real; D-2/MiniMax aún no activado — ver nota abajo)
 const TEXT_GROQ_LIMIT = 900;
 const TEXT_CEREBRAS_TOKEN_LIMIT = 900_000;
 
 export async function getAIProvider(modality: AIModality, userId?: string): Promise<AIProvider> {
   if (modality === 'vision') {
-    // Visión SOLO cloud; NUNCA Ollama (INV-7). Siempre Gemini; sin fallback Claude (D-2).
-    if (await flag('vision_paid_fallback_active')) {
-      // Tras 50 usuarios (D-2): si Gemini agota cuota, fallback de pago MiniMax M3 (soporta visión).
-      if ((await getDailyUsage('gemini')) >= GEMINI_VISION_LIMIT) {
-        return { provider: 'minimax', model: 'MiniMax-M3' };
-      }
-    }
-    // Flag off ⇒ siempre Gemini; la cuota agotada se maneja en dispatch (429 → ai_vision_exhausted, §C-14.3).
+    // Siempre Gemini Flash; sin fallback Claude (eliminado, D-2). Visión nunca a Ollama (INV-7).
+    // La cuota agotada se maneja en dispatch (Gemini 429 -> ai_vision_exhausted -> verification_queue, §C-14.3).
+    // Fallback de pago MiniMax M3 se añade al activar el flag vision_paid_fallback_active (D-2, §C-25/§C-10.3).
     return { provider: 'gemini', model: 'gemini-2.5-flash' };
   }
   // Texto fundador: Ollama local qwen3:8b (sin consumir cuota cloud).
-  if (process.env.FOUNDER_USER_ID && userId === process.env.FOUNDER_USER_ID) {
+  const founderUserId = process.env.FOUNDER_USER_ID;
+  if (founderUserId && userId === founderUserId) {
     return { provider: 'ollama', model: 'qwen3:8b' };
   }
   // Texto usuarios: rotación por cuota diaria.
-  if ((await getDailyUsage('groq'))     < TEXT_GROQ_LIMIT)          return { provider: 'groq',     model: 'llama-3.3-70b-versatile' };
-  if ((await getDailyUsage('cerebras')) < TEXT_CEREBRAS_TOKEN_LIMIT) return { provider: 'cerebras', model: 'llama3.1-70b' };
+  if ((await getDailyUsage('groq')) < TEXT_GROQ_LIMIT) {
+    return { provider: 'groq', model: 'llama-3.3-70b-versatile' };
+  }
+  if ((await getDailyUsage('cerebras')) < TEXT_CEREBRAS_TOKEN_LIMIT) {
+    return { provider: 'cerebras', model: 'llama3.1-70b' };
+  }
   return { provider: 'ollama', model: 'qwen3:8b' }; // best-effort, fuera de ruta crítica
 }
 ```
+
+**Nota de implementación (D-2 aún no activado):** este bloque es el código real de `router.ts`
+a 2026-06-21. La rama condicional de MiniMax M3 (`GEMINI_VISION_LIMIT`, `flag('vision_paid_fallback_active')`)
+descrita arriba en prosa **todavía no está escrita** — solo hay un comentario marcando dónde se
+añadirá al activar D-2 tras superar 50 usuarios. Mientras el flag no exista, el comportamiento
+real y el especificado coinciden (siempre Gemini).
 
 `getDailyUsage(provider)` (F2) lee `ai_daily_usage` para `(provider, current_date)`; ausencia de fila ⇒ 0. El reset es por fecha (no requiere job). Para texto, los umbrales se comparan: Groq/Cerebras por `request_count`/`token_count` respectivamente (la unidad correcta por proveedor está documentada en la fila del comentario).
 
@@ -1180,8 +1182,6 @@ Errores: 402 sin créditos; 409 estado inválido; 503/encolado si `ai_vision_exh
 | GET | `/api/v1/tasks` | Lista tareas del usuario (OAuth Google). |
 | POST | `/api/v1/tasks/:id/complete` | Marca tarea completada en Google Tasks. |
 
-(Google Calendar sync es feature Pro+; sus endpoints siguen el mismo patrón y se activan por `subscriptions.plan`.)
-
 ### C-11.6. Webhooks (entrada; contratos en §C-12)
 
 | Método | Ruta | Auth |
@@ -1195,6 +1195,42 @@ Errores: 402 sin créditos; 409 estado inválido; 503/encolado si `ai_vision_exh
 |--------|------|-------------|
 | POST | `/internal/monetization/run` | Ejecuta triggers (§C-9.7). Llamado por n8n con secreto. |
 | POST | `/internal/cleanup/run` | Ejecuta retención (§C-15). Llamado por n8n. |
+| POST | `/internal/ai-usage/reconcile` | Normaliza `ai_daily_usage` contra `usage_log` (§C-12.2). Llamado por n8n con `INTERNAL_ADMIN_SECRET` (credencial nativa, §C-25 D-6). |
+
+### C-11.8. Cuenta (GDPR, §C-15.4)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/account/delete` | Borra la cuenta del usuario end-to-end y cierra sesión. |
+| GET | `/api/v1/account/export` | Exporta los datos del usuario (derecho de acceso) en JSON. |
+
+### C-11.9. Calendar (Pro+, §C-1.2 #8)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/calendar` | Eventos próximos de Google Calendar + detección de conflictos con bloques. Activa por `subscriptions.plan`. |
+
+### C-11.10. Challenges (Team, §C-1.2 #10)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/challenges` | Lista challenges del usuario con leaderboard. |
+| POST | `/api/v1/challenges` | Crea un challenge. Requiere plan `team`. |
+| POST | `/api/v1/challenges/:id/join` | Une al usuario a un challenge (p. ej. accountability partner de 2 miembros). Requiere plan `team`. |
+
+### C-11.11. Push (Web Push, AR-6)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/v1/push` | Registra una suscripción Web Push (`endpoint`, `keys`). RLS propia del usuario. |
+| DELETE | `/api/v1/push?endpoint=` | Elimina la suscripción Web Push del usuario. |
+
+### C-11.12. Google OAuth (§C-13.1 paso 6)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/api/v1/google/connect` | Inicia el consentimiento OAuth de Google con acceso offline (Tasks/Calendar). |
+| GET | `/api/v1/google/callback` | Valida `state` (CSRF), intercambia `code` y guarda los tokens cifrados (D-4). |
 
 ---
 
@@ -1831,6 +1867,10 @@ Los refresh tokens de Google (Tasks/Calendar) se almacenan **cifrados con AES-25
 ### D-5. VM de orquestación: Contabo VPS (reemplaza Oracle Always Free)
 
 La orquestación corre en un **Contabo VPS x86_64** (6 vCPU / 12 GB / 96 GB · Ubuntu 24.04) en lugar de Oracle Always Free (ARM A1). Razones: disponibilidad y simplicidad operativa. Los límites de recursos del `docker-compose` se ajustaron proporcionalmente; la ruta canónica `apps/flowday/docker/oracle/` se conserva por compatibilidad (no se renombra; INV-9). Detalle operativo en PROGRESO. *(Decisión registrada en 2.1; consecuencia de hecho, no contrato nuevo.)*
+
+### D-6. Hardening de n8n: credencial nativa + bloqueo de `$env`
+
+El fix inicial de n8n (`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, ver PROGRESO) dejaba `INTERNAL_ADMIN_SECRET` legible vía `{{$env.*}}` por **cualquier** workflow de la instancia, incluido `Yleis - Lead Enrichment Pipeline` (otro proyecto del fundador en la misma instancia n8n) — superficie inaceptable para un secreto admin. Se cierra: `APP_URL` queda **hardcodeada** en los 8 workflows (`apps/flowday/n8n/workflows/*.json`); `INTERNAL_ADMIN_SECRET` se mueve a una **credencial nativa** `httpHeaderAuth` (`FlowDay Internal Admin`, id `FLOWDAYADMIN0001`, cabecera `x-internal-secret`), creada de forma reproducible por `apps/flowday/n8n/setup-credentials.sh`; y `N8N_BLOCK_ENV_ACCESS_IN_NODE` vuelve a `true`, bloqueando `$env` para toda la instancia. Detalle operativo, fecha y verificación end-to-end (los 8 workflows en `success`) en PROGRESO. *(Decisión registrada en 2.1; cierra una superficie de exposición del fix anterior, no introduce contrato nuevo de producto.)*
 
 ---
 
