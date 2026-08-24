@@ -245,10 +245,25 @@ junio por origin), 107_whatsapp_links, 108_evidence_phase, 013_frequent_reminder
 014_quiet_hours aplicadas contra el proyecto Supabase vía MCP (AR-2: nunca psql a mano contra
 prod); 106_reorg_cache es un backfill del archivo, la tabla ya existía. Fases 7 (guía diaria por
 WhatsApp, D-10), 8 (recordatorio frecuente, D-11), 9 ("¿qué sigue?"/posponer/horario de
-silencio/resumen de cierre, D-12) y 10 (completar tareas de Google Tasks al verificar, D-13)
-implementadas 2026-08-24. Confirmado en vivo contra Supabase (2026-08-24): el scheduler
-(`/internal/scheduler/run`) está siendo llamado con éxito cada ~5 min (42 hits en 24h, sin
-errores) — algo (n8n) está orquestando activamente. Pendiente de confirmar: si esa instancia es
-el VPS real o un remanente de la prueba local con ngrok; `reorg_cache` no tiene ninguna fila
-todavía para la cuenta real, y `/internal/whatsapp-inbound` no ha recibido tráfico en 7 días —
-el flujo de WhatsApp end-to-end sigue sin probarse en el entorno real (§C-13.10).
+silencio/resumen de cierre, D-12), 10 (completar tareas de Google Tasks al verificar, D-13) y 11
+(todas las listas de Tasks + coherencia horaria, D-14) implementadas 2026-08-24.
+
+**Primera prueba real completa (2026-08-24, ~1pm hora del usuario):** el flujo de WhatsApp
+funcionó de punta a punta contra la cuenta real — "saldo", "racha", "saltar", "comenzar" y
+"¿qué sigue?" respondieron correctamente. Confirmó también que el scheduler
+(`/internal/scheduler/run`) está siendo orquestado activamente (no confirmado aún si por el VPS
+real o un remanente de la prueba local con ngrok). La misma prueba expuso los dos bugs que D-14
+corrige: `reorg_cache` tenía 0 filas históricas para la cuenta real hasta ese momento (primera
+vez que `getOrComputeDailyPlan` corría con éxito), y el plan generado esa vez solo trajo eventos
+de Calendar (con dos de ellos superpuestos a las 10:00–10:30 — pendiente de investigar si es un
+bug de lectura o refleja un choque real en el Calendar del usuario) y cero tareas de Tasks,
+porque `listTasks()` solo miraba la lista `@default`.
+
+## Fase 11 — Todas las listas de Google Tasks + coherencia horaria del planificador (D-14)
+
+| Requisito | Archivo |
+|---|---|
+| `listTasks`/`completeTask` con id compuesto `{listId}:{taskId}`, todas las listas (§C-11.5) | `apps/flowday/lib/google/tasks.ts` |
+| `hasRoomToday`/`buildPlanPrompt(fixed, nowHHMM)` — nunca asigna en el pasado (§C-26.2b) | `apps/flowday/lib/planning/plan-prompt.ts` |
+| `parsePlanResponse(text, earliestStart)` — filtro de defensa en profundidad | `apps/flowday/lib/planning/plan-prompt.ts` |
+| `computePlan` pasa `nowHHMM` y corta antes de llamar IA si no hay margen | `apps/flowday/lib/planning/daily-plan.ts` |

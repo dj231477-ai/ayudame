@@ -17,13 +17,25 @@ export interface UnscheduledTaskInput {
 const DAY_START = '07:00';
 const DAY_END = '21:00';
 
-/** PLAN_PROMPT (§C-26.2/§C-26.3): encaja tareas sin hora en los huecos libres del día. */
-export function buildPlanPrompt(fixedBlocks: FixedBlockInput[]): string {
+/** D-14, §C-26.2b: ¿queda margen hoy para encajar algo con IA a partir de "ahora"? */
+export function hasRoomToday(nowHHMM: string): boolean {
+  return nowHHMM < DAY_END;
+}
+
+/** D-14, §C-26.2b: piso real del día — "ahora" si ya pasó DAY_START, si no DAY_START. */
+function effectiveStart(nowHHMM: string): string {
+  return nowHHMM > DAY_START ? nowHHMM : DAY_START;
+}
+
+/** PLAN_PROMPT (§C-26.2/§C-26.3/§C-26.2b): encaja tareas sin hora en los huecos libres del día,
+ *  nunca antes de `nowHHMM` (D-14: si se calcula a media jornada, no propone nada en el pasado). */
+export function buildPlanPrompt(fixedBlocks: FixedBlockInput[], nowHHMM: string): string {
+  const start = effectiveStart(nowHHMM);
   const fixedDesc =
     fixedBlocks.length === 0
       ? 'Ninguno.'
       : fixedBlocks.map((b) => `${b.start_time}-${b.end_time}: ${b.label}`).join('; ');
-  return `Eres el planificador diario de FlowDay. El día disponible va de ${DAY_START} a ${DAY_END}.
+  return `Eres el planificador diario de FlowDay. Ahora mismo son las ${nowHHMM}. El día disponible va de ${start} a ${DAY_END} — NUNCA asignes nada antes de ${start}, ya pasó y sería incoherente.
 Bloques ya fijos hoy (no los toques, no te superpongas con ellos): ${fixedDesc}
 Encaja cada tarea listada en <user_data> en un hueco libre del día, en el orden que tenga más sentido.
 Cada bloque dura entre 25 y 90 minutos según la tarea. No superpongas bloques entre sí ni con los fijos.
@@ -43,8 +55,12 @@ export interface PlannedBlock {
 const VALID_TYPES = new Set(['deep', 'admin', 'body', 'rest', 'review']);
 const TIME_RE = /^\d{2}:\d{2}$/;
 
-/** Parseo tolerante del JSON del modelo (acepta fences ```json), descarta filas inválidas. */
-export function parsePlanResponse(text: string): PlannedBlock[] {
+/**
+ * Parseo tolerante del JSON del modelo (acepta fences ```json), descarta filas inválidas.
+ * `earliestStart` (D-14, defensa en profundidad): descarta también bloques que el modelo haya
+ * propuesto antes de esa hora, en caso de que no haya seguido la instrucción del prompt.
+ */
+export function parsePlanResponse(text: string, earliestStart?: string): PlannedBlock[] {
   const cleaned = text
     .trim()
     .replace(/^```(?:json)?/i, '')
@@ -56,7 +72,7 @@ export function parsePlanResponse(text: string): PlannedBlock[] {
     return obj.blocks.filter((b): b is PlannedBlock => {
       if (typeof b !== 'object' || b === null) return false;
       const r = b as Record<string, unknown>;
-      return (
+      const valid =
         typeof r.task_id === 'string' &&
         typeof r.label === 'string' &&
         typeof r.start_time === 'string' &&
@@ -64,8 +80,10 @@ export function parsePlanResponse(text: string): PlannedBlock[] {
         typeof r.end_time === 'string' &&
         TIME_RE.test(r.end_time) &&
         typeof r.type === 'string' &&
-        VALID_TYPES.has(r.type)
-      );
+        VALID_TYPES.has(r.type);
+      if (!valid) return false;
+      if (earliestStart && (r.start_time as string) < earliestStart) return false;
+      return true;
     });
   } catch {
     return [];

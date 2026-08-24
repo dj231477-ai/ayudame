@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.5 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.6 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -17,6 +17,8 @@
 > **Cambios en 2.1.4 (agosto 2026).** Cuatro mejoras de accesibilidad TDAH/memoria débil, pedidas junto con D-11 (**D-12**, §C-13.5b/§C-13.10): (1) comando WhatsApp **"¿qué sigue?"** — responde al instante qué tienes activo o qué sigue, sin esperar la secuencia normal. (2) Comando **"posponer"** — reinicia la ventana de recordatorio de la foto pendiente (inicio o fin) sin marcar el bloque como saltado. (3) **Horario de silencio personalizable** (`profiles.quiet_hours_start`/`quiet_hours_end`, migración `014_quiet_hours.sql`, nulos = deshabilitado): silencia los avisos que origina el scheduler (push y WhatsApp) sin afectar las transiciones de estado ni las respuestas directas a un mensaje del usuario. (4) **Resumen de cierre de día**: el mensaje "eso es todo por hoy" (§C-13.10) ahora incluye cuántos bloques se verificaron y la racha actual, en vez de terminar en seco.
 >
 > **Cambios en 2.1.5 (agosto 2026).** Cierra el círculo de §C-26: al verificarse la foto de fin de un bloque ligado a una tarea de Google Tasks, `verifyPhoto()` marca esa tarea completada ahí mismo (**D-13**, §C-11.5/§C-13.3) — `completeTask()` ya existía pero no estaba conectado a este flujo. Best-effort, nunca revierte la verificación si Google Tasks falla. Deliberadamente NO incluye escribir eventos en Google Calendar ni reordenar tareas (alcance acotado explícitamente por el usuario).
+>
+> **Cambios en 2.1.6 (agosto 2026).** Dos correcciones encontradas en la primera prueba real contra la cuenta real (**D-14**, §C-11.5/§C-26.2b): (1) `listTasks()` ahora lee **todas** las listas de Google Tasks del usuario, no solo `@default` — id compuesto `{listId}:{taskId}` propagado a `blocks.task_id` y a `completeTask` (D-13). (2) El planificador ya no asigna tareas antes de la hora actual del usuario cuando la reorganización se calcula a media jornada — recibe "ahora" como piso en vez de asumir siempre `07:00`.
 
 ---
 
@@ -653,7 +655,7 @@ create table blocks (
   end_time    time not null,
   label       text not null,
   type        text not null,    -- 'deep' | 'admin' | 'body' | 'rest' | 'review'
-  task_id     text,             -- ID de Google Tasks (opcional)
+  task_id     text,             -- ID compuesto "{listId}:{taskId}" de Google Tasks (opcional, D-14)
   status      text not null default 'pending',
   -- 'pending'|'awaiting_start_photo'|'active'|'awaiting_photo'|'verified'|'skipped' (§C-13.2, D-10)
   created_at  timestamptz not null default now(),
@@ -1245,6 +1247,15 @@ marcarlas completadas a mano — la IA lo hace al confirmar la evidencia. Best-e
 completar la tarea en Google (token vencido, error de red) se registra pero **no** revierte la
 verificación ya cobrada y guardada — la evidencia en FlowDay es la fuente de verdad, Google Tasks
 es un reflejo.
+
+**Todas las listas del usuario, no solo "Mis tareas" (D-14) [NORMATIVO].** `listTasks(userId)`
+llama primero `GET /users/@me/lists` (Google Tasks API) para enumerar **todas** las listas del
+usuario, y luego trae las tareas pendientes de cada una — no asume que el usuario organiza todo
+en la lista `@default`. Cada `GoogleTask.id` es un **id compuesto** `"{listId}:{taskId}"`, porque
+la API de Google Tasks exige la lista tanto para leer como para completar una tarea; `task_id`
+en `blocks` (§C-7.2) guarda ese mismo id compuesto. `completeTask(userId, compositeId)` lo
+separa por el primer `:` y hace `PATCH` contra `/lists/{listId}/tasks/{taskId}`. No hay UI
+todavía para que el usuario elija qué listas compartir — se leen todas por defecto.
 
 ### C-11.6. Webhooks (entrada; contratos en §C-12)
 
@@ -2170,6 +2181,24 @@ se revierte — la evidencia de FlowDay es la fuente de verdad (INV-11), Google 
 reflejo, no al revés. Deliberadamente NO incluye crear/mover eventos en Google Calendar ni
 reordenar tareas ahí — eso sigue fuera de alcance (el usuario lo confirmó al acotar el pedido).
 
+### D-14. Dos correcciones detectadas en la primera prueba real: todas las listas de Tasks, coherencia horaria (§C-11.5, §C-26.2b)
+
+La primera vez que corrió `getOrComputeDailyPlan` contra la cuenta real (2026-08-24, ~1pm,
+disparado por "comenzar"), produjo un plan incoherente: cero tareas de Google Tasks (aunque el
+usuario tenía muchas pendientes) y un bloque a las 10am — casi 3 horas en el pasado. Diagnosticado
+con logs de Vercel + consultas directas a Supabase (sin adivinar): `daily_plan.blocks_created
+count:3` sin ningún log de `ai.call_*`, confirmando que `listTasks()` devolvió cero tareas — la
+IA nunca llegó a invocarse. Dos causas, dos fixes:
+
+1. **`listTasks()` solo leía la lista `@default` ("Mis tareas").** El usuario tenía sus tareas
+   pendientes en otras listas. Se corrige leyendo **todas** las listas del usuario (§C-11.5) —
+   el id compuesto `{listId}:{taskId}` se propaga a `blocks.task_id` (§C-7.2) y a `completeTask`
+   (D-13), que ahora también funciona para tareas de listas no-`@default`.
+2. **El planificador no sabía qué hora era.** `buildPlanPrompt` fijaba la ventana del día a
+   `07:00–21:00` sin importar cuándo se calculaba — si se disparaba a la 1pm, igual podía asignar
+   algo a las 10am. Se corrige pasándole la hora actual del usuario como piso (§C-26.2b): nunca
+   asigna antes de "ahora".
+
 ---
 
 ## C-26. Auto-organización de Calendar/Tasks (Pro+)
@@ -2185,6 +2214,18 @@ reordenar tareas ahí — eso sigue fuera de alcance (el usuario lo confirmó al
 ### C-26.2. Eventos con hora exacta → bloques directos (sin IA) [NORMATIVO]
 
 Un evento de Google Calendar con `start.dateTime` y `end.dateTime` (hora exacta, no all-day) se convierte **directamente** en un `block` (type `admin` o derivado del evento), sin pasar por IA. Solo las **tareas sin hora** (Google Tasks, o eventos all-day) se entregan a la IA para encajarlas en los huecos libres restantes. Esto reduce el input de IA y su coste.
+
+### C-26.2b. Coherencia horaria: nunca asignar en el pasado (D-14) [NORMATIVO]
+
+Cuando la reorganización se calcula **a media jornada** (p. ej. el usuario escribe "comenzar" a
+la 1pm sin que el cron de `morning-briefing` haya corrido todavía ese día), la IA recibe la hora
+actual del usuario (`localTimeHHMM(now, tz)`) como piso — nunca encaja una tarea antes de "ahora"
+(`hasRoomToday`/`buildPlanPrompt`, `apps/flowday/lib/planning/plan-prompt.ts`). Si ya no queda
+margen entre "ahora" y el fin del día planificable, no se llama a la IA (§C-26.1 principio 1: es
+el último recurso) y el plan queda solo con los bloques fijos de Calendar que sí apliquen. Esta
+regla se evalúa en el momento del cálculo — un plan ya cacheado desde temprano no se recalcula
+solo porque avance el reloj (§C-26.3); si el usuario llega tarde a un bloque ya agendado, es el
+mecanismo de recordatorios/auto-skip (§C-13.5) el que lo maneja, no una reescritura del plan.
 
 ### C-26.3. Cache de reorganización con invalidación por hash [NORMATIVO]
 

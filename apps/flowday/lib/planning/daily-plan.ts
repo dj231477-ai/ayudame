@@ -7,7 +7,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { localDayRangeUtc, localTimeHHMM } from '@/lib/datetime';
 import { listUpcomingEvents } from '@/lib/google/calendar';
 import { listTasks } from '@/lib/google/tasks';
-import { buildPlanPrompt, parsePlanResponse, type FixedBlockInput } from './plan-prompt';
+import { buildPlanPrompt, parsePlanResponse, hasRoomToday, type FixedBlockInput } from './plan-prompt';
 
 // =============================================================================
 // Auto-organización de Calendar/Tasks  [NORMATIVO — SPEC §C-26, D-10]
@@ -149,8 +149,10 @@ async function computePlan(
   }
 
   const pendingTasks = tasks.filter((t) => t.status !== 'completed');
-  if (pendingTasks.length === 0) {
-    // Nada que encajar con IA: se sirve solo de lo determinista (§C-26.1 principio 1).
+  const nowHHMM = localTimeHHMM(new Date(), tz);
+  if (pendingTasks.length === 0 || !hasRoomToday(nowHHMM)) {
+    // Nada que encajar con IA (sin tareas, o ya no queda margen hoy — D-14, §C-26.2b):
+    // se sirve solo de lo determinista (§C-26.1 principio 1).
     return fixed.sort((a, b) => a.start_time.localeCompare(b.start_time));
   }
 
@@ -163,10 +165,10 @@ async function computePlan(
   try {
     const ai = await callAI(userId, 'daily_briefing', {
       modality: 'text',
-      system: buildPlanPrompt(fixedInput),
+      system: buildPlanPrompt(fixedInput, nowHHMM),
       userData: JSON.stringify(pendingTasks.map((t) => ({ id: t.id, title: t.title }))),
     });
-    const planned = parsePlanResponse(ai.text);
+    const planned = parsePlanResponse(ai.text, nowHHMM);
     const aiBlocks: DailyPlanBlock[] = planned.map((p) => ({
       label: p.label,
       start_time: p.start_time,
