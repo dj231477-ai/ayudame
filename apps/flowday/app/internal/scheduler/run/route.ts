@@ -108,6 +108,31 @@ async function notifyUnlessQuiet(
   if (waText !== undefined) await notifyWhatsAppIfLinked(userId, waText);
 }
 
+/**
+ * D-18: una transición de estado que falla en el servidor (p. ej. un CHECK constraint
+ * desactualizado) no debe fallar en silencio — el bloque se quedaba atascado sin ningún rastro
+ * en los logs. Todo cambio de `status` desde el scheduler pasa por aquí.
+ */
+async function updateBlockStatus(
+  svc: FlowDayClient,
+  blockId: string,
+  status: string,
+  context: string,
+): Promise<boolean> {
+  const { error } = await svc.from('blocks').update({ status }).eq('id', blockId);
+  if (error) {
+    logger.error({
+      event: 'scheduler.block_status_update_failed',
+      block_id: blockId,
+      new_status: status,
+      context,
+      error: { code: 'internal', message: error.message },
+    });
+    return false;
+  }
+  return true;
+}
+
 async function runSchedule(svc: FlowDayClient): Promise<number> {
   const now = new Date();
   // Ventana de fechas UTC que cubre cualquier tz.
@@ -138,7 +163,7 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
     const quiet = isQuietHours(nowMin, profile.quietHoursStart, profile.quietHoursEnd);
 
     if (b.status === 'pending' && within(startMin) && canTransition('pending', 'awaiting_start_photo')) {
-      await svc.from('blocks').update({ status: 'awaiting_start_photo' }).eq('id', b.id);
+      if (!(await updateBlockStatus(svc, b.id, 'awaiting_start_photo', 'schedule.start'))) continue;
       const body = `${greeting}vamos a empezar con ${b.label}. Tienes ${PHOTO_WINDOW_MIN} minutos para mandarme la foto de que arrancaste.`;
       await notifyUnlessQuiet(b.user_id, quiet, { title: 'Empieza tu bloque', body, url: '/focus' }, body);
       actions++;
@@ -149,7 +174,7 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
     ) {
       // D-10, §C-13.5: a diferencia de awaiting_photo (nunca se auto-marca, INV-11), aquí no
       // hubo trabajo que preservar — se venció la ventana fija de la foto de inicio.
-      await svc.from('blocks').update({ status: 'skipped' }).eq('id', b.id);
+      if (!(await updateBlockStatus(svc, b.id, 'skipped', 'schedule.start_photo_timeout'))) continue;
       const body = `No llegó la foto de inicio a tiempo: ${b.label}. Lo salté.`;
       await notifyUnlessQuiet(b.user_id, quiet, { title: 'Bloque saltado', body, url: '/focus' }, body);
       actions++;
@@ -161,7 +186,7 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
       });
       actions++;
     } else if (b.status === 'active' && within(endMin) && canTransition('active', 'awaiting_photo')) {
-      await svc.from('blocks').update({ status: 'awaiting_photo' }).eq('id', b.id);
+      if (!(await updateBlockStatus(svc, b.id, 'awaiting_photo', 'schedule.end'))) continue;
       const body = `Tienes ${PHOTO_WINDOW_MIN} minutos para mandarme la foto de que terminaste: ${b.label}.`;
       await notifyUnlessQuiet(b.user_id, quiet, { title: 'Sube tu foto', body, url: '/focus' }, body);
       actions++;

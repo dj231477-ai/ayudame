@@ -303,3 +303,19 @@ porque `listTasks()` solo miraba la lista `@default`.
 |---|---|
 | `nextPendingBlock` arma `awaiting_start_photo` si el `start_time` efectivo ya llegó (§C-13.3b) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
 | Mensajes ("Siguiente"/"Ahora mismo") reflejan si ya quedó armado (`started`) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
+
+## Fase 15 — Primera prueba real con Playwright del ciclo de dos fotos: dos bugs críticos de infra (D-18/D-19)
+
+> Pedido explícito del usuario: "tus test siempre dicen que todo está bien" — probar contra la
+> cuenta real con Playwright, no confiar solo en tests unitarios. La primera prueba (clic real
+> en "Iniciar") devolvió 500 de inmediato; encontró dos bugs de *drift* entre lo committeado y
+> lo vivo en Supabase que ningún test unitario podía atrapar, porque ninguno ejercita el
+> constraint/trigger real de Postgres.
+
+| Requisito | Archivo |
+|---|---|
+| D-18: CHECK de `blocks.status` en prod sin `awaiting_start_photo` desde que D-10 lo introdujo | `apps/flowday/db/migrations/109_blocks_status_check_fix.sql` |
+| D-19: `trg_blocks_touch` nunca existió en prod, `updated_at` jamás se actualizaba (backfill) | `apps/flowday/db/migrations/110_blocks_touch_trigger_backfill.sql` |
+| `updateBlockStatus()` — las transiciones del scheduler ya no fallan en silencio | `apps/flowday/app/internal/scheduler/run/route.ts` |
+| `nextPendingBlock` revisa el error de su propia escritura de estado | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
+| Script de prueba real (Playwright + foto real de `fotospruebas/`) | `apps/flowday/scripts/test-two-phase-real.mjs` (no versionado, como los scripts de prueba anteriores) |

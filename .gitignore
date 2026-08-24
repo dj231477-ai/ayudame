@@ -42,3 +42,6 @@ apps/flowday/docker/oracle/certbot/
 
 # Salida de graphify (auditoría de drift puntual, no es artefacto del producto)
 graphify-out/
+
+# Fotos reales de prueba contra la cuenta real (repo público — nunca se versionan)
+fotospruebas/

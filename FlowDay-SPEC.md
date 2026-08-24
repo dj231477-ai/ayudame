@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.9 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.10 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -25,6 +25,8 @@
 > **Cambios en 2.1.8 (agosto 2026).** D-15 introdujo una regresión: la materialización de `getOrComputeDailyPlan` deduplicaba por `start_time+label`, pero la propia reagenda de D-15 muta el `start_time` del bloque ya insertado — cada llamada posterior a "comenzar" volvía a comparar contra la hora *original* del plan cacheado, no la encontraba, y creaba un duplicado. Cada duplicado adicional podía terminar auto-saltado por el scheduler, dejando "¿qué sigue?" reportando "nada pendiente" de forma incoherente aunque quedaran tareas reales. **D-16** (§C-26.3b) corrige la clave de deduplicación a solo `label` — `start_time` ya no es identidad estable una vez existe el catch-up. Datos ya corruptos de la cuenta real limpiados manualmente el 2026-08-24 (bloques duplicados sin evidencia asociada, confirmado antes de borrar).
 >
 > **Cambios en 2.1.9 (agosto 2026).** El usuario mandó una foto justo después de que "¿qué sigue?" le anunciara la tarea siguiente y la app respondió "no tienes ningún bloque esperando foto" — porque `nextPendingBlock` (D-15) solo ajustaba fechas, nunca transicionaba el bloque fuera de `pending`, y el único mecanismo que sí transiciona (el cron pasivo, `within(startMin)`) exige coincidir con un tick de 5 min que, para un bloque cuyo horario ya pasó o fue reagendado, puede no volver a darse nunca. **D-17** (§C-13.3b): si la ventana efectiva del bloque siguiente ya empezó (por horario original o por la reagenda), `nextPendingBlock` lo arma directamente en `awaiting_start_photo` — listo para recibir la foto de inicio de inmediato — en vez de dejarlo esperando al cron. Si en cambio es genuinamente futuro, se deja en `pending` sin tocar, para no adelantarle el reloj de `PHOTO_WINDOW_MIN`.
+>
+> **Cambios en 2.1.10 (agosto 2026).** Primera prueba real con Playwright contra el flujo de dos fotos (D-10) — no unitaria, contra la cuenta real en producción — expuso dos bugs de infraestructura que ningún test unitario podía atrapar, ambos de *drift* entre lo committeado y lo realmente vivo en Supabase (mismo patrón que el backfill de `106_reorg_cache.sql`, §C-25 nota histórica): **D-18** (§C-7.2): el CHECK constraint `blocks_status_check` en producción nunca incluyó `'awaiting_start_photo'` — cualquier intento de esa transición fallaba en el servidor con 500 (o en silencio, en las llamadas que no revisan el error de la escritura), desde que D-10 introdujo el estado. **D-19** (§C-7.2): el trigger `trg_blocks_touch` (`updated_at` automático) nunca existió en producción — `blocks.updated_at` jamás se actualizaba en ningún UPDATE, rompiendo todo lo que depende de la edad del bloque (auto-skip de `PHOTO_WINDOW_MIN`, recordatorios, "posponer"). Ambos corregidos en vivo vía MCP y respaldados con migraciones `109`/`110`.
 
 ---
 
@@ -668,6 +670,14 @@ create table blocks (
   updated_at  timestamptz not null default now()
 );
 create index blocks_user_date_idx on blocks(user_id, date);
+-- 109_blocks_status_check_fix.sql (D-18): el CHECK de status en prod nunca incluyó
+-- 'awaiting_start_photo' desde que D-10 lo introdujo — toda esa transición fallaba en el
+-- servidor. alter table blocks drop constraint blocks_status_check; alter table blocks add
+-- constraint blocks_status_check check (status = any (array['pending','awaiting_start_photo',
+-- 'active','awaiting_photo','verified','skipped']));
+-- 110_blocks_touch_trigger_backfill.sql (D-19, backfill — mismo patrón que 106_reorg_cache.sql):
+-- trg_blocks_touch nunca existió en prod, updated_at jamás se actualizaba. Recrea la función y
+-- el trigger `before update on blocks` tal cual estaban en este mismo archivo más abajo.
 
 -- 101_evidence.sql  (append-only; INV-11)
 create table evidence (
@@ -2276,6 +2286,38 @@ reagendado o cuyo horario original ya pasó, ese tick puede no volver a darse nu
 `start_time` efectivo del bloque siguiente es `<= ahora`, `nextPendingBlock` lo arma en
 `awaiting_start_photo` en el mismo momento en que lo anuncia (§C-13.3b) — nunca para bloques
 genuinamente futuros, para no adelantarles el reloj de `PHOTO_WINDOW_MIN`.
+
+### D-18. El CHECK constraint de `blocks.status` en producción nunca incluyó `awaiting_start_photo` (§C-7.2)
+
+El usuario pidió explícitamente probar los endpoints con Playwright contra su cuenta real en
+vez de confiar solo en los tests unitarios ("tus test siempre dicen que todo está bien"). La
+primera prueba real (clic en "Iniciar" desde el dashboard, PWA) devolvió **500** al intentar
+`pending → awaiting_start_photo`. Diagnosticado contra Supabase directamente: el CHECK
+constraint `blocks_status_check` en producción seguía siendo `status = ANY (ARRAY['pending',
+'active','awaiting_photo','verified','skipped'])` — **sin `awaiting_start_photo`** — desde que
+D-10 introdujo ese estado varios commits atrás. El código (zod, TypeScript, la máquina de
+estados) sí lo conocía; la migración `100_blocks.sql` (ya publicada, INV-9, nunca se edita) no.
+Cualquier intento de esa transición fallaba en el servidor: algunas rutas lo propagaban como
+500 (`PATCH /api/v1/blocks/:id`), pero otras (`runSchedule`, `nextPendingBlock`) nunca revisan
+el `.error` de esa escritura puntual y fallaban **en silencio** — el bloque se quedaba en
+`pending` sin ningún indicio de por qué. Fix (migración `109`, aplicada vía MCP): recrea el
+constraint incluyendo los seis estados reales.
+
+### D-19. El trigger `trg_blocks_touch` nunca existió en producción — `updated_at` jamás se actualizaba (§C-7.2)
+
+Detectado investigando por qué un bloque recién armado en `awaiting_start_photo` no se
+auto-saltaba pese a llevar más de una hora esperando (`PHOTO_WINDOW_MIN` = 15 min): su
+`updated_at` seguía siendo el de su creación original, horas atrás. `pg_trigger` contra la
+tabla real confirmó que `trg_blocks_touch` (`before update on blocks`, definido en
+`100_blocks.sql`) **no existía en la base de datos** — ni la función `touch_blocks_updated_at()`
+tampoco. Mismo patrón de *drift* que el backfill de `106_reorg_cache.sql` (§C-25): el archivo
+migración está committeado, pero la operación real contra producción nunca se ejecutó (o se
+perdió en algún punto de la reconciliación con `origin/master`). Efecto: **todo** lo que
+depende de la edad de un bloque —auto-skip de `awaiting_start_photo`, recordatorios (§C-13.5),
+"posponer" (§C-13.5d, que reescribe el mismo `status` precisamente para tocar `updated_at`)—
+llevaba tiempo sin funcionar en producción, silenciosamente, para cualquier bloque. Fix
+(migración `110`, backfill aplicado vía MCP): recrea la función y el trigger tal como estaban
+siempre especificados en `100_blocks.sql`.
 
 ---
 

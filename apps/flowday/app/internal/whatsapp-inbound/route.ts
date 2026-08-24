@@ -263,7 +263,12 @@ async function nextPendingBlock(
   const update: Record<string, unknown> = { ...next.catchUp };
   if (started) update.status = 'awaiting_start_photo';
   if (Object.keys(update).length > 0) {
-    await svc.from('blocks').update(update).eq('id', next.id);
+    const { error } = await svc.from('blocks').update(update).eq('id', next.id);
+    // D-18: una escritura de estado que falla en el servidor no debe fallar en silencio.
+    if (error) {
+      logger.error({ event: 'whatsapp.next_pending_block_update_failed', block_id: next.id, error: { code: 'internal', message: error.message } });
+      return { label: next.label, start_time: next.start_time, end_time: next.end_time, started: false };
+    }
   }
 
   return { label: next.label, start_time: next.start_time, end_time: next.end_time, started };
