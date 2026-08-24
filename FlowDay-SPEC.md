@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.7 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.8 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -21,6 +21,8 @@
 > **Cambios en 2.1.6 (agosto 2026).** Dos correcciones encontradas en la primera prueba real contra la cuenta real (**D-14**, §C-11.5/§C-26.2b): (1) `listTasks()` ahora lee **todas** las listas de Google Tasks del usuario, no solo `@default` — id compuesto `{listId}:{taskId}` propagado a `blocks.task_id` y a `completeTask` (D-13). (2) El planificador ya no asigna tareas antes de la hora actual del usuario cuando la reorganización se calcula a media jornada — recibe "ahora" como piso en vez de asumir siempre `07:00`.
 >
 > **Cambios en 2.1.7 (agosto 2026).** D-14 no alcanzaba para bloques ya materializados con hora fija de Calendar: seguían mostrando su hora original aunque ya hubiera pasado (**D-15**, §C-13.3b/§C-13.10). (1) Comando/flujo de WhatsApp: el bloque `pending` de menor `start_time` se reagenda a "ahora" (misma duración) si su ventana original ya pasó por completo, antes de anunciarlo — nunca desde el cron pasivo, solo al interactuar (`comenzar`, `¿qué sigue?`, tras verificar). (2) El saludo de `handleStartDay` ahora depende de la hora real (`timeGreeting`) — "Buenos días"/"Buenas tardes"/"Buenas noches" — en vez de decir siempre "Buenos días".
+>
+> **Cambios en 2.1.8 (agosto 2026).** D-15 introdujo una regresión: la materialización de `getOrComputeDailyPlan` deduplicaba por `start_time+label`, pero la propia reagenda de D-15 muta el `start_time` del bloque ya insertado — cada llamada posterior a "comenzar" volvía a comparar contra la hora *original* del plan cacheado, no la encontraba, y creaba un duplicado. Cada duplicado adicional podía terminar auto-saltado por el scheduler, dejando "¿qué sigue?" reportando "nada pendiente" de forma incoherente aunque quedaran tareas reales. **D-16** (§C-26.3b) corrige la clave de deduplicación a solo `label` — `start_time` ya no es identidad estable una vez existe el catch-up. Datos ya corruptos de la cuenta real limpiados manualmente el 2026-08-24 (bloques duplicados sin evidencia asociada, confirmado antes de borrar).
 
 ---
 
@@ -2235,6 +2237,19 @@ modificar el horario original, no puede seguir pasando eso". Dos fixes:
    usa la hora local real del usuario: "Buenos días" (< 12:00), "Buenas tardes" (< 19:00),
    "Buenas noches" (resto).
 
+### D-16. Regresión de D-15: la reagenda rompía la deduplicación de bloques (§C-26.3b)
+
+Al probar D-15 en vivo, cada "comenzar" repetido creaba bloques duplicados — y con suficientes
+duplicados, el scheduler terminaba auto-saltando algunos, dejando "¿qué sigue?" (§C-13.5d)
+diciendo "nada pendiente" de forma incoherente pese a que quedaban tareas reales. Causa raíz,
+diagnosticada contra Supabase directamente (sin adivinar): la materialización de
+`getOrComputeDailyPlan` deduplicaba por `start_time+label`, pero D-15 muta el `start_time` de la
+fila ya insertada al reagendarla — la siguiente llamada comparaba contra la hora *original* del
+plan cacheado (que nunca cambia) y no encontraba coincidencia, insertando un duplicado cada vez.
+Fix: deduplicar solo por `label` (§C-26.3b) — `start_time` deja de ser identidad estable una vez
+existe el catch-up. Datos ya corruptos de la cuenta real (6 bloques duplicados, ninguno con
+evidencia asociada, confirmado antes de borrar) limpiados manualmente el 2026-08-24.
+
 ---
 
 ## C-26. Auto-organización de Calendar/Tasks (Pro+)
@@ -2269,6 +2284,18 @@ mecanismo de recordatorios/auto-skip (§C-13.5) el que lo maneja, no una reescri
 - La clave de invalidación es un **hash determinista de los datos fuente**: `sha256(canonical(tasks) + canonical(events) + date + tz)`. `canonical()` ordena y proyecta solo los campos relevantes (id, título, due/hora, estado) para que cambios irrelevantes no invaliden.
 - En cada disparo: se recalcula el hash; **si coincide con el cacheado, no se llama a la IA** (se devuelve el plan cacheado). Si difiere, se reorganiza y se guarda `{hash, plan, computed_at}`.
 - Ubicación de cache: tabla ligera o columna JSON por usuario (p. ej. `reorg_cache(user_id, date, source_hash, plan jsonb, computed_at)`); RLS propia de usuario (§C-8.2). Es **derivada/desechable**: puede regenerarse en cualquier momento.
+
+### C-26.3b. Deduplicación de la materialización: solo por `label` (D-16) [NORMATIVO]
+
+Al materializar el `plan` (cacheado o recién calculado) en filas de `blocks`, la comparación
+contra los bloques ya existentes ese día usa **únicamente `label`** como clave — nunca
+`start_time`. Razón: el catch-up (D-15, §C-13.3b) muta el `start_time` de un bloque ya
+insertado cuando su ventana original venció; si la deduplicación incluyera `start_time`,
+compararía contra la hora *original* del plan cacheado (que nunca cambia) y jamás encontraría
+coincidencia con la fila ya reagendada — creando un bloque duplicado en cada llamada posterior
+a `getOrComputeDailyPlan` (p. ej. cada "comenzar"). Esto se descubrió en producción: los
+duplicados terminaban auto-saltados por el scheduler, dejando "¿qué sigue?" (§C-13.5d) diciendo
+"nada pendiente" de forma incoherente.
 
 ### C-26.4. Disparo principal: 1×/día vía morning-briefing [NORMATIVO]
 

@@ -279,3 +279,15 @@ porque `listTasks()` solo miraba la lista `@default`.
 | `nextPendingBlock` — reagenda antes de anunciar/encadenar (§C-13.3b/§C-13.10) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
 | `timeGreeting`/`minutesToHHMM` puras + tests | `apps/flowday/lib/datetime.ts` |
 | Saludo real (`handleStartDay`) en vez de "Buenos días" fijo | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
+
+## Fase 13 — Fix de regresión: deduplicación de bloques rota por la reagenda (D-16)
+
+> Encontrado probando D-15 en vivo: la reagenda mutaba `start_time`, rompiendo la comparación
+> `start_time+label` que evitaba duplicados — cada "comenzar" repetido creaba bloques de más,
+> algunos terminaban auto-saltados, y "¿qué sigue?" reportaba "nada pendiente" de forma
+> incoherente. Diagnosticado contra Supabase directamente, sin adivinar.
+
+| Requisito | Archivo |
+|---|---|
+| Deduplicación de materialización solo por `label` (§C-26.3b) | `apps/flowday/lib/planning/daily-plan.ts` |
+| Limpieza manual de datos ya corruptos en la cuenta real (2026-08-24) | Supabase (`blocks`), vía MCP — 6 duplicados sin evidencia asociada, confirmado antes de borrar |

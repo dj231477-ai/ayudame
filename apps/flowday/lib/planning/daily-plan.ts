@@ -55,7 +55,7 @@ function computeSourceHash(input: {
 /**
  * Obtiene (de cache) o calcula el plan del día y crea en `blocks` los que aún no existan.
  * Idempotente: llamarla varias veces el mismo día con las mismas fuentes no gasta IA de nuevo
- * (§C-26.3) ni duplica bloques (se compara contra los ya existentes por start_time+label).
+ * (§C-26.3) ni duplica bloques (se compara contra los ya existentes por `label`, D-16).
  */
 export async function getOrComputeDailyPlan(userId: string, dateStr: string): Promise<DailyPlanBlock[]> {
   const svc = createServiceClient();
@@ -108,11 +108,13 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
     });
   }
 
-  // Materializa en `blocks` los que aún no existan hoy (match por start_time+label — derivado,
-  // no hay unicidad estricta porque el usuario puede editar bloques manualmente después).
-  const existingKeys = new Set(existingBlocks.map((b) => `${b.start_time}|${b.label}`));
+  // Materializa en `blocks` los que aún no existan hoy (match por `label` — derivado, no hay
+  // unicidad estricta. D-16: el match NO puede incluir start_time — computeCatchUp (D-15) muta
+  // el start_time del bloque ya insertado, así que comparar contra el start_time original del
+  // plan cacheado siempre fallaba y volvía a insertar un duplicado en cada llamada posterior).
+  const existingKeys = new Set(existingBlocks.map((b) => b.label));
   const toInsert = plan
-    .filter((p) => !existingKeys.has(`${p.start_time}|${p.label}`))
+    .filter((p) => !existingKeys.has(p.label))
     .map((p) => ({
       user_id: userId,
       date: dateStr,
