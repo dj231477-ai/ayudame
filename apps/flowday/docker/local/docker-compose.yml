@@ -3,16 +3,20 @@
 # hardcodeada (https://ayudame-flowday.vercel.app) y usan la credencial nativa httpHeaderAuth
 # (n8n/setup-credentials.sh) — para probarlos contra este stack local, edita la URL del nodo
 # HTTP Request en la UI de n8n a http://host.docker.internal:3000 antes de ejecutar.
+# N8N_HOST/N8N_PROTOCOL/WEBHOOK_URL son parametrizables (default: localhost puro) para poder
+# apuntarlos a un túnel público (ngrok, etc.) cuando un trigger de webhook real (p. ej.
+# WhatsApp Trigger, §C-13.10) necesita una URL HTTPS alcanzable desde fuera — Meta no puede
+# llamar a localhost. Pon los valores del túnel en .env solo mientras dure esa prueba puntual.
 services:
   n8n:
     image: n8nio/n8n:latest
     restart: unless-stopped
     ports: ['5678:5678']
     environment:
-      - N8N_HOST=localhost
-      - N8N_PROTOCOL=http
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
       - N8N_PORT=5678
-      - WEBHOOK_URL=http://localhost:5678/
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
       - N8N_SECURE_COOKIE=false
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres

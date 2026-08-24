@@ -10,7 +10,8 @@ import { verifyPhoto } from '@/lib/verify-photo';
 // =============================================================================
 // Webhook WhatsApp inbound  [NORMATIVO — SPEC §C-13.10]
 // n8n ya validó la firma de Meta (X-Hub-Signature-256, nodo WhatsApp Trigger) y
-// reenvía el payload crudo. Autenticado igual que el resto de /internal/* (D-6,
+// reenvía el `value` ya desempaquetado (un item por `change`, no el sobre
+// entry[].changes[] completo — ver InboundBody). Autenticado igual que el resto de /internal/* (D-6,
 // §C-25): secreto compartido en cabecera x-internal-secret, credencial nativa
 // de n8n `FlowDay Internal Admin` (id FLOWDAYADMIN0001) — no HMAC ni $env.
 // Idempotencia por wamid (INV-6). Canal ADICIONAL opt-in (AR-6) — nunca
@@ -27,18 +28,13 @@ const InboundMessage = z.object({
   image: z.object({ id: z.string() }).optional(),
 });
 
+// El nodo WhatsApp Trigger de n8n ya desempaqueta el sobre crudo de Meta
+// (entry[].changes[].value) y reenvía el `value` directo, con un item por
+// `change` — no {entry:[{changes:[{value:{...}}]}]}, sino {messaging_product,
+// metadata, contacts, messages, field} tal cual (confirmado contra un payload
+// real: WhatsAppTrigger.node.js hace `{...change.value, field: change.field}`).
 const InboundBody = z.object({
-  entry: z.array(
-    z.object({
-      changes: z.array(
-        z.object({
-          value: z.object({
-            messages: z.array(InboundMessage).optional(),
-          }),
-        }),
-      ),
-    }),
-  ),
+  messages: z.array(InboundMessage).optional(),
 });
 
 const LINK_COMMAND = /^link\s+(\d{6})$/i;
@@ -58,7 +54,7 @@ export async function POST(request: Request) {
     return Response.json({ error: { code: 'bad_request', message: 'invalid payload' } }, { status: 400 });
   }
 
-  const messages = parsed.data.entry.flatMap((e) => e.changes.flatMap((c) => c.value.messages ?? []));
+  const messages = parsed.data.messages ?? [];
 
   for (const msg of messages) {
     await processOnce(msg.id, 'whatsapp', async () => {
