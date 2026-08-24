@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.8 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.9 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -23,6 +23,8 @@
 > **Cambios en 2.1.7 (agosto 2026).** D-14 no alcanzaba para bloques ya materializados con hora fija de Calendar: seguían mostrando su hora original aunque ya hubiera pasado (**D-15**, §C-13.3b/§C-13.10). (1) Comando/flujo de WhatsApp: el bloque `pending` de menor `start_time` se reagenda a "ahora" (misma duración) si su ventana original ya pasó por completo, antes de anunciarlo — nunca desde el cron pasivo, solo al interactuar (`comenzar`, `¿qué sigue?`, tras verificar). (2) El saludo de `handleStartDay` ahora depende de la hora real (`timeGreeting`) — "Buenos días"/"Buenas tardes"/"Buenas noches" — en vez de decir siempre "Buenos días".
 >
 > **Cambios en 2.1.8 (agosto 2026).** D-15 introdujo una regresión: la materialización de `getOrComputeDailyPlan` deduplicaba por `start_time+label`, pero la propia reagenda de D-15 muta el `start_time` del bloque ya insertado — cada llamada posterior a "comenzar" volvía a comparar contra la hora *original* del plan cacheado, no la encontraba, y creaba un duplicado. Cada duplicado adicional podía terminar auto-saltado por el scheduler, dejando "¿qué sigue?" reportando "nada pendiente" de forma incoherente aunque quedaran tareas reales. **D-16** (§C-26.3b) corrige la clave de deduplicación a solo `label` — `start_time` ya no es identidad estable una vez existe el catch-up. Datos ya corruptos de la cuenta real limpiados manualmente el 2026-08-24 (bloques duplicados sin evidencia asociada, confirmado antes de borrar).
+>
+> **Cambios en 2.1.9 (agosto 2026).** El usuario mandó una foto justo después de que "¿qué sigue?" le anunciara la tarea siguiente y la app respondió "no tienes ningún bloque esperando foto" — porque `nextPendingBlock` (D-15) solo ajustaba fechas, nunca transicionaba el bloque fuera de `pending`, y el único mecanismo que sí transiciona (el cron pasivo, `within(startMin)`) exige coincidir con un tick de 5 min que, para un bloque cuyo horario ya pasó o fue reagendado, puede no volver a darse nunca. **D-17** (§C-13.3b): si la ventana efectiva del bloque siguiente ya empezó (por horario original o por la reagenda), `nextPendingBlock` lo arma directamente en `awaiting_start_photo` — listo para recibir la foto de inicio de inmediato — en vez de dejarlo esperando al cron. Si en cambio es genuinamente futuro, se deja en `pending` sin tocar, para no adelantarle el reloj de `PHOTO_WINDOW_MIN`.
 
 ---
 
@@ -1452,6 +1454,18 @@ bloque `pending` de menor `start_time` antes de anunciarlo. El usuario aprobó e
 modificar el horario original para esto — la alternativa (mostrar "empecemos ahora" con una hora
 ya vencida hace horas) es la incoherencia que este mecanismo resuelve.
 
+**Armado inmediato si la ventana ya empezó (D-17) [NORMATIVO].** Reagendar solo las *fechas* no
+basta: el bloque seguía en `pending`, y la única vía que lo saca de ahí es el cron pasivo
+(`runSchedule`, `within(startMin)`), que exige coincidir con un tick de 5 min que —para un
+bloque cuyo horario ya pasó o fue reagendado— puede no volver a darse nunca. Por eso
+`nextPendingBlock()` también revisa si `start_time` (ya efectivo, post-reagenda) es `<= ahora`:
+si es así, transiciona el bloque directamente a `awaiting_start_photo` en el mismo momento en
+que lo anuncia — listo para recibir la foto de inicio de inmediato (`handlePhoto`, §C-13.10,
+solo acepta fotos de bloques ya en `awaiting_start_photo`/`awaiting_photo`). Si en cambio el
+bloque es genuinamente futuro (más tarde hoy, sin necesitar reagenda), se deja en `pending` sin
+tocar — el scheduler lo arma en su momento real, sin adelantarle el reloj de `PHOTO_WINDOW_MIN`
+de más.
+
 ### C-13.4. Prompt de verificación [NORMATIVO]
 
 `VERIFY_PROMPT` es el `system`; el nombre de tarea va como `userData` (nunca interpolado, §C-10.5).
@@ -2249,6 +2263,19 @@ plan cacheado (que nunca cambia) y no encontraba coincidencia, insertando un dup
 Fix: deduplicar solo por `label` (§C-26.3b) — `start_time` deja de ser identidad estable una vez
 existe el catch-up. Datos ya corruptos de la cuenta real (6 bloques duplicados, ninguno con
 evidencia asociada, confirmado antes de borrar) limpiados manualmente el 2026-08-24.
+
+### D-17. El catch-up reagendaba fechas pero nunca armaba el bloque para recibir la foto (§C-13.3b)
+
+Con D-16 ya corregido, el usuario probó "¿qué sigue?" (mostró correctamente la tarea siguiente)
+y a los segundos mandó la foto de inicio — la app respondió "no tienes ningún bloque esperando
+foto ahora mismo". Causa: `nextPendingBlock` (D-15) solo ajustaba `start_time`/`end_time`; el
+bloque seguía en `pending`, y `handlePhoto` (§C-13.10) solo acepta fotos de bloques en
+`awaiting_start_photo`/`awaiting_photo`. La única vía que saca un bloque de `pending` es el cron
+pasivo (`runSchedule`, `within(startMin)`), que exige un tick de 5 min exacto — para un bloque ya
+reagendado o cuyo horario original ya pasó, ese tick puede no volver a darse nunca. Fix: si el
+`start_time` efectivo del bloque siguiente es `<= ahora`, `nextPendingBlock` lo arma en
+`awaiting_start_photo` en el mismo momento en que lo anuncia (§C-13.3b) — nunca para bloques
+genuinamente futuros, para no adelantarles el reloj de `PHOTO_WINDOW_MIN`.
 
 ---
 

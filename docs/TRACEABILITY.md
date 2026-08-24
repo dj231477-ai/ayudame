@@ -291,3 +291,15 @@ porque `listTasks()` solo miraba la lista `@default`.
 |---|---|
 | Deduplicación de materialización solo por `label` (§C-26.3b) | `apps/flowday/lib/planning/daily-plan.ts` |
 | Limpieza manual de datos ya corruptos en la cuenta real (2026-08-24) | Supabase (`blocks`), vía MCP — 6 duplicados sin evidencia asociada, confirmado antes de borrar |
+
+## Fase 14 — El catch-up reagendaba fechas pero nunca armaba el bloque (D-17)
+
+> Con D-16 ya corregido, "¿qué sigue?" mostró bien la tarea siguiente, pero mandar la foto de
+> inicio a los segundos devolvió "no tienes ningún bloque esperando foto" — el bloque seguía en
+> `pending`, y solo el cron pasivo (con un tick de 5 min que podía no volver a coincidir nunca)
+> lo sacaba de ahí.
+
+| Requisito | Archivo |
+|---|---|
+| `nextPendingBlock` arma `awaiting_start_photo` si el `start_time` efectivo ya llegó (§C-13.3b) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
+| Mensajes ("Siguiente"/"Ahora mismo") reflejan si ya quedó armado (`started`) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
