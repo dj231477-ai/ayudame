@@ -4,7 +4,7 @@ import { processOnce } from '@flowday/core/events/idempotency';
 import { logger, newRequestId } from '@flowday/core/observability/logger';
 import { sendWhatsAppText, fetchWhatsAppMedia } from '@flowday/core/notifications/whatsapp';
 import { createServiceClient } from '@/lib/supabase/service';
-import { canTransition } from '@/lib/blocks/state-machine';
+import { canTransition, PHOTO_WINDOW_MIN } from '@/lib/blocks/state-machine';
 import { verifyPhoto } from '@/lib/verify-photo';
 import { getOrComputeDailyPlan } from '@/lib/planning/daily-plan';
 import { localDate } from '@/lib/datetime';
@@ -296,8 +296,9 @@ async function handleStartDay(
   userId: string,
   phone: string,
 ): Promise<void> {
-  const { data: profile } = await svc.from('profiles').select('timezone').eq('id', userId).single();
+  const { data: profile } = await svc.from('profiles').select('timezone, full_name').eq('id', userId).single();
   const tz = profile?.timezone ?? 'America/Bogota';
+  const greeting = profile?.full_name ? `Buenos días ${profile.full_name}!` : 'Buenos días!';
   const today = localDate(new Date(), tz);
 
   let plan: Awaited<ReturnType<typeof getOrComputeDailyPlan>>;
@@ -315,7 +316,7 @@ async function handleStartDay(
 
   const { data: first } = await svc
     .from('blocks')
-    .select('label, start_time, end_time')
+    .select('label, start_time, end_time, status')
     .eq('user_id', userId)
     .eq('date', today)
     .in('status', ['pending', 'awaiting_start_photo', 'active'])
@@ -324,12 +325,19 @@ async function handleStartDay(
     .maybeSingle();
 
   if (!first) {
-    await sendWhatsAppText(phone, '¡Ya completaste todo lo de hoy! Buen trabajo.');
+    await sendWhatsAppText(phone, `${greeting} ¡Ya completaste todo lo de hoy! Buen trabajo.`);
     return;
   }
 
+  // Si el scheduler ya transicionó el bloque a awaiting_start_photo, ese aviso (con los
+  // PHOTO_WINDOW_MIN minutos, §C-13.5) ya se mandó por separado — este mensaje solo confirma.
+  const photoHint =
+    first.status === 'awaiting_start_photo'
+      ? ''
+      : ` Tienes ${PHOTO_WINDOW_MIN} minutos para mandarme la foto de que arrancaste una vez empiece.`;
+
   await sendWhatsAppText(
     phone,
-    `Buenos días! Hoy empezamos con ${first.label} (${first.start_time}–${first.end_time}). Mándame una foto cuando arranques.`,
+    `${greeting} Hoy empezamos con ${first.label} (${first.start_time}–${first.end_time}).${photoHint}`,
   );
 }

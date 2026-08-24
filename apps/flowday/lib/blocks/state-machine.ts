@@ -8,6 +8,11 @@
 
 import type { BlockStatus } from '@flowday/core/supabase/types';
 
+// D-10, §C-13.5: minutos comunicados al usuario para cada foto (inicio y fin). Plazo duro
+// para awaiting_start_photo (auto-skip al vencer); guía sin consecuencia dura para awaiting_photo
+// (INV-11: nunca se auto-marca). Fuente única — nunca hardcodear "15" en otro archivo.
+export const PHOTO_WINDOW_MIN = 15;
+
 const VALID_TRANSITIONS: Record<BlockStatus, readonly BlockStatus[]> = {
   pending: ['awaiting_start_photo'],
   awaiting_start_photo: ['active', 'skipped'],

@@ -16,14 +16,37 @@ const LABEL: Record<string, string> = {
 interface SettingsClientProps {
   googleConnected: boolean;
   whatsappPhone: string | null;
+  frequentReminders: boolean;
 }
 
-export function SettingsClient({ googleConnected, whatsappPhone }: SettingsClientProps) {
+export function SettingsClient({ googleConnected, whatsappPhone, frequentReminders }: SettingsClientProps) {
   const { status, subscribe } = usePush();
   const [waCode, setWaCode] = useState<string | null>(null);
   const [waBusy, setWaBusy] = useState(false);
   const [waError, setWaError] = useState<string | null>(null);
   const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? '';
+
+  const [frequent, setFrequent] = useState(frequentReminders);
+  const [frequentBusy, setFrequentBusy] = useState(false);
+  const [frequentError, setFrequentError] = useState<string | null>(null);
+
+  async function toggleFrequentReminders(next: boolean) {
+    setFrequentError(null);
+    setFrequentBusy(true);
+    const previous = frequent;
+    setFrequent(next); // optimista: es una preferencia de accesibilidad, no debe sentirse lenta.
+    try {
+      await apiFetch('/api/v1/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ frequent_reminders: next }),
+      });
+    } catch (e) {
+      setFrequent(previous);
+      if (e instanceof ApiError) setFrequentError(e.message);
+    } finally {
+      setFrequentBusy(false);
+    }
+  }
 
   async function connectWhatsApp() {
     setWaBusy(true);
@@ -50,6 +73,27 @@ export function SettingsClient({ googleConnected, whatsappPhone }: SettingsClien
       >
         {LABEL[status] ?? 'Activar notificaciones'}
       </Button>
+
+      <div className="pt-4">
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={frequent}
+            disabled={frequentBusy}
+            onChange={(e) => void toggleFrequentReminders(e.target.checked)}
+            className="mt-1 h-5 w-5"
+          />
+          <span>
+            <span className="block font-medium">Recordatorio frecuente</span>
+            <span className="block text-sm text-neutral-600">
+              Pensado para TDAH o memoria débil: te recuerda seguido lo que tienes que hacer —
+              incluso mientras estás trabajando en un bloque, no solo al empezar o terminar.
+              Desactivado por defecto.
+            </span>
+          </span>
+        </label>
+        {frequentError ? <p className="mt-1 text-sm text-red-600">{frequentError}</p> : null}
+      </div>
 
       <div className="pt-4">
         <p className="font-medium">Google Tasks</p>

@@ -13,9 +13,10 @@ export default async function SettingsPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect('/');
 
-  const [googleConnected, { data: waLink }] = await Promise.all([
+  const [googleConnected, { data: waLink }, { data: profile }] = await Promise.all([
     isGoogleConnected(user.id),
     supabase.from('whatsapp_links').select('phone_e164').eq('user_id', user.id).maybeSingle(),
+    supabase.from('profiles').select('frequent_reminders').eq('id', user.id).single(),
   ]);
 
   return (
@@ -27,7 +28,11 @@ export default async function SettingsPage() {
         </a>
       </header>
 
-      <SettingsClient googleConnected={googleConnected} whatsappPhone={waLink?.phone_e164 ?? null} />
+      <SettingsClient
+        googleConnected={googleConnected}
+        whatsappPhone={waLink?.phone_e164 ?? null}
+        frequentReminders={profile?.frequent_reminders ?? false}
+      />
 
       <AccountClient />
 

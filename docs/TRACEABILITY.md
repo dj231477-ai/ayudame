@@ -205,12 +205,23 @@
 | UI de foto de inicio (PWA) | `apps/flowday/components/blocks/DayBoard.tsx` |
 | Rango de día local para Calendar (§C-26.2) | `apps/flowday/lib/datetime.ts` (`localDayRangeUtc`, `localTimeHHMM`), `lib/google/calendar.ts` |
 
+## Fase 8 — Recordatorio frecuente, opt-in para TDAH/memoria débil (D-11)
+
+| Requisito | Archivo |
+|---|---|
+| profiles.frequent_reminders (§C-7.1) | `packages/db/migrations/013_frequent_reminders.sql` |
+| Cadencia escalonada pura + tests (§C-13.5b) | `apps/flowday/lib/blocks/reminder-cadence.ts` |
+| `PATCH /api/v1/profile` (§C-11.14) | `apps/flowday/app/api/v1/profile/route.ts` |
+| Checkbox desmarcado por defecto en Ajustes | `apps/flowday/components/SettingsClient.tsx` |
+| Avisos en awaiting_start_photo/awaiting_photo/active | `apps/flowday/app/internal/scheduler/run/route.ts` (`runSchedule`, `runReminders`) |
+| Envío por WhatsApp si hay número vinculado | `apps/flowday/lib/notify/whatsapp.ts` (`notifyWhatsAppIfLinked`) |
+
 ## Estado
 
 Fases 0–5 en producción (`origin/master`, PRs #1–#5). Fase 6 (WhatsApp + Ollama descartado +
 vuelta a Oracle) reconciliada por fusión el 2026-08-24. Migraciones 011/012 (ya aplicadas en
-junio por origin) y 107_whatsapp_links (aplicada 2026-08-24, ver §C-7.2) confirmadas en vivo
-contra el proyecto Supabase; 106_reorg_cache es un backfill del archivo, la tabla ya existía.
-Fase 7 (guía diaria por WhatsApp, D-10) implementada 2026-08-24 sobre esa base; migración 108
-pendiente de aplicar contra Supabase (`bash packages/db/scripts/apply-migrations.sh`) y de
-probar end-to-end contra la cuenta real, igual que el resto del canal WhatsApp (§C-13.10).
+junio por origin), 107_whatsapp_links, 108_evidence_phase y 013_frequent_reminders aplicadas
+contra el proyecto Supabase vía MCP (AR-2: nunca psql a mano contra prod); 106_reorg_cache es un
+backfill del archivo, la tabla ya existía. Fases 7 (guía diaria por WhatsApp, D-10) y 8
+(recordatorio frecuente, D-11) implementadas 2026-08-24. Pendiente: push a `origin/master`, y
+prueba end-to-end en vivo del flujo completo contra la cuenta real (§C-13.10).

@@ -4,13 +4,15 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.2 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.3 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
 > **Cambios en 2.1.1 (agosto 2026).** (1) **D-7:** el Contabo VPS (D-5) quedó suspendido por impago; orquestación migrando de vuelta a Oracle Always Free, ahora en tier reducido (1 OCPU/6GB, sin Ollama en esta VM) — §C-16.2. (2) **D-8:** WhatsApp Business Cloud API oficial como **canal adicional opt-in** (AR-6, §C-13.10) — vínculo de teléfono, foto de evidencia y comandos cortos por WhatsApp, reusando `verifyPhoto()` sin lógica duplicada; workflow `whatsapp-inbound` autenticado igual que el resto de `/internal/*` (D-6), no HMAC. (3) Se restaura §C-13.9 "Guía de privacidad en la foto de evidencia" (el código de `PhotoCapture` nunca cambió; 2.1 omitió documentarlo). (4) Nueva §C-18.6: herramientas de testing opt-in (smoke test de n8n, Postman/Newman, Playwright E2E, Lighthouse) y los bugs reales que encontraron. (5) Modelo Gemini actualizado a `gemini-3.6-flash` (`gemini-2.5-flash` quedó deprecado). (6) **D-9:** Ollama se elimina por completo (latencia inaceptable); MiniMax M3 cubre también el respaldo de texto bajo el mismo flag `vision_paid_fallback_active` (§C-10.3).
 >
 > **Cambios en 2.1.2 (agosto 2026).** Guía diaria por WhatsApp, sin plantilla de Meta y sin coste por mensaje (**D-10**, §C-25): el usuario escribe una palabra clave ("comenzar"/"empezar"/"iniciar") cada mañana, lo que abre la ventana de respuesta libre de 24 h y evita todo mensaje proactivo. (1) Se implementa la auto-organización de Calendar/Tasks (§C-26), hasta ahora solo especificada: `getOrComputeDailyPlan` (`apps/flowday/lib/planning/daily-plan.ts`), reusando `reorg_cache` (migración `106_reorg_cache.sql`). (2) Nuevo modelo de **doble foto por bloque** (inicio + fin, §C-13.2/§C-13.3): nuevo estado `awaiting_start_photo` y columna `evidence.phase` (migración `108_evidence_phase.sql`). (3) §C-13.10 se extiende con el flujo conversacional secuencial (palabra clave → primer bloque → foto de inicio → foto de fin → siguiente bloque → cierre del día).
+>
+> **Cambios en 2.1.3 (agosto 2026).** Modo de **recordatorio frecuente**, opt-in y desmarcado por defecto, pensado para TDAH/memoria débil (**D-11**, §C-13.5b): `profiles.frequent_reminders` (migración `013_frequent_reminders.sql`) activa recordatorios escalonados (espaciados lejos del límite, cada tick del cron —5 min— cerca de él) en las tres fases donde el usuario puede perderse — foto de inicio, foto de fin (sin tope, INV-11) y, por primera vez, durante el propio bloque activo. Cadencia pura y testeada en `apps/flowday/lib/blocks/reminder-cadence.ts`. Nuevo `PATCH /api/v1/profile` (§C-11.14) para activarlo desde Ajustes.
 
 ---
 
@@ -526,9 +528,13 @@ create table profiles (
   streak      integer not null default 0,
   timezone    text not null default 'America/Bogota',
   locale      text not null default 'es',   -- 'es' | 'en'
+  frequent_reminders boolean not null default false, -- D-11: recordatorios frecuentes opt-in
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
+-- 013_frequent_reminders.sql (D-11, §C-13.5): añade frequent_reminders a profiles, desmarcado
+-- por defecto (false) — el usuario lo activa explícitamente desde Ajustes.
+-- alter table profiles add column frequent_reminders boolean not null default false;
 
 -- 001_credits.sql  (saldo en USD, precisión 6 decimales)
 create table credits (
@@ -1284,6 +1290,12 @@ Los 5 endpoints autentican igual: `authorizeInternal()` (`apps/flowday/lib/inter
 |--------|------|------|-------------|
 | POST | `/api/v1/whatsapp/link-code` | usuario | Genera un código de 6 dígitos (expira en 15 min) para vincular el número de WhatsApp del usuario. Responde `{code, expires_at}`. |
 
+### C-11.14. Perfil — ajustes de usuario (D-11)
+
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| PATCH | `/api/v1/profile` | usuario | Ajustes propios editables desde `Ajustes`. Body: `{frequent_reminders?: boolean}`. Responde el perfil actualizado. |
+
 ---
 
 ## C-12. Contratos de eventos (webhooks y n8n)
@@ -1377,12 +1389,12 @@ Procesamiento:
 
 ### C-13.3. Ciclo de accountability (camino feliz) [NORMATIVO — extendido en 2.1.2, D-10]
 
-1. **Llega la hora de inicio** (scheduler, §C-13.2) → `awaiting_start_photo`; push/WhatsApp "Empieza <label>, mándame una foto de que arrancaste". Si hay `task_id`, se muestra la tarea.
+1. **Llega la hora de inicio** (scheduler, §C-13.2) → `awaiting_start_photo`; push y (si tiene WhatsApp vinculado) WhatsApp: "<nombre>, vamos a empezar con <label>. Tienes `PHOTO_WINDOW_MIN` minutos para mandarme la foto de que arrancaste" (§C-13.5). Si hay `task_id`, se muestra la tarea.
 2. Usuario captura foto de inicio → sube a Storage → `POST /verify-photo {phase:'start'}`.
-3. Router de IA verifica (pre-cobro, mismo coste que la de fin). Si `verified`: `active`; push/WhatsApp de confirmación con la hora de cierre.
+3. Router de IA verifica (pre-cobro, mismo coste que la de fin). Si `verified`: `active`; confirmación por push/WhatsApp.
 4. Usuario trabaja; la PWA muestra timer (focus mode opcional).
 5. **block_warning** (~10 min antes del fin) → push "Faltan 10 min, prepara tu foto".
-6. **end_block** → `awaiting_photo`; push "Sube tu foto".
+6. **end_block** → `awaiting_photo`; push y (si tiene WhatsApp vinculado) WhatsApp: "Tienes `PHOTO_WINDOW_MIN` minutos para mandarme la foto de que terminaste: <label>" (§C-13.5).
 7. Usuario captura foto de fin → sube a Storage → `POST /verify-photo {phase:'end'}`.
 8. Router de IA verifica (pre-cobro). Si `verified`: `verified`, `streak++`, push/WhatsApp de felicitación y, si hay más bloques `pending` ese día, se anuncia el siguiente (§C-13.10).
 9. Si una foto (inicio o fin) es rechazada por contenido: se informa, **se cobró** el intento, usuario puede reintentar.
@@ -1403,11 +1415,58 @@ Criterios: deep work → pantalla con código/documento, cuaderno, escritorio co
 ejercicio → ropa/contexto deportivo; descanso → contexto de pausa; rechaza imágenes claramente ajenas o de galería/stock; ante duda razonable, verifica.
 ```
 
-### C-13.5. Recordatorios de foto
+### C-13.5. Recordatorios de foto y ventana de minutos (D-10) [NORMATIVO]
 
-- A los 15 min en `awaiting_photo` sin evidencia, `photo-reminder` dispara push; se repite hasta 3 veces cada 5 min.
-- Tras el 3.º sin acción, el bloque permanece `awaiting_photo` (el usuario puede subir foto tarde o marcar `skipped`). No se auto-marca para preservar honestidad del historial (INV-11).
-- **`awaiting_start_photo` (D-10, distinto de lo anterior):** si el bloque termina (`end_time`) sin que llegara la foto de inicio, el job `schedule` transiciona el bloque a `skipped` automáticamente — a diferencia de `awaiting_photo`, aquí no hubo trabajo que preservar en el historial, así que no hay tensión con INV-11. `reminders` avisa antes de ese vencimiento igual que con `awaiting_photo`.
+`PHOTO_WINDOW_MIN = 15` (`apps/flowday/lib/blocks/state-machine.ts` — fuente única, D-10) es el número de
+minutos que se comunica textualmente al usuario en ambos avisos de foto (§C-13.3 pasos 1 y 6),
+por push y por WhatsApp si tiene el número vinculado (`notifyWhatsAppIfLinked`, D-10) — pero su
+consecuencia difiere según la fase:
+
+- **`awaiting_photo` (foto de fin):** a los `PHOTO_WINDOW_MIN` min sin evidencia, `photo-reminder`
+  dispara push; se repite hasta 3 veces cada 5 min. Tras el 3.º sin acción, el bloque permanece
+  `awaiting_photo` (el usuario puede subir foto tarde o marcar `skipped`). No se auto-marca para
+  preservar honestidad del historial (INV-11) — los `PHOTO_WINDOW_MIN` minutos son una guía, no
+  un plazo duro.
+- **`awaiting_start_photo` (foto de inicio):** a diferencia de lo anterior, aquí los
+  `PHOTO_WINDOW_MIN` minutos SÍ son un plazo duro: si se cumplen sin que llegara la foto, el job
+  `schedule` transiciona el bloque a `skipped` automáticamente — no hubo trabajo que preservar en
+  el historial, así que no hay tensión con INV-11. Por defecto no recibe recordatorio intermedio
+  (la ventana es corta; un aviso a mitad de camino sería redundante con el de "bloque saltado"
+  que llega al vencer) — salvo que el usuario tenga activo el modo de recordatorio frecuente
+  (D-11, abajo), que sí lo añade.
+
+### C-13.5b. Modo de recordatorio frecuente — opt-in para TDAH/memoria débil (D-11) [NORMATIVO]
+
+`profiles.frequent_reminders` (default `false`, activable desde `Ajustes` vía
+`PATCH /api/v1/profile`, §C-11.14) intensifica los recordatorios en las tres fases del bloque
+donde hoy el usuario puede "perderse": foto de inicio pendiente, foto de fin pendiente, y **el
+propio bloque activo** (mientras trabaja, no solo en sus transiciones) — la app nunca le exige
+otra cosa, pero la ausencia de recordatorios intermedios durante el trabajo era el hueco más
+citado por usuarios con TDAH.
+
+Cadencia (`apps/flowday/lib/blocks/reminder-cadence.ts`, funciones puras `dueOnTick`/
+`frequentReminderDue`, con test unitario): **escalonada** — espaciada cada `FREQUENT_SPACED_
+INTERVAL_MIN` (10 min) mientras falten más de `FREQUENT_ESCALATE_THRESHOLD_MIN` (15 min) para el
+límite relevante, y en **cada tick** del cron (`TICK_WINDOW_MIN` = 5 min, el piso real: los
+crons de n8n corren cada 5 min, §C-12.2 — no hay recordatorio más frecuente sin acortar esos
+crons) una vez dentro de esos últimos 15 minutos. El "límite relevante" depende de la fase:
+
+- **`awaiting_start_photo`:** el propio plazo duro de `PHOTO_WINDOW_MIN` (15 min) — como la
+  ventana entera coincide con el umbral de escalada, en la práctica siempre está en modo "cada
+  tick": ~2 avisos extra (a los ~5 y ~10 min) antes del auto-skip a los 15.
+- **`awaiting_photo`:** sin límite (INV-11) — se usa `remainingMin = null`, así que escala a
+  "cada tick" a partir de los 15 min sin foto y **se mantiene indefinidamente** hasta que llegue
+  la evidencia o el usuario la salte a mano; a diferencia del recordatorio por defecto (que para
+  a los ~3 avisos, §C-13.5), aquí no hay tope — el usuario pidió explícitamente "que me esté
+  recordando constantemente".
+- **`active`:** minutos hasta `end_time` del bloque (calculado en `runSchedule`, mismo bloque de
+  código que ya resuelve tz/`nowMin`/`endMin` para el resto de transiciones). Mensaje tipo "¿Sigues
+  con <label>? Quedan N min." — la única fase nueva que no existía antes de D-11: hoy el único
+  aviso durante `active` es el de "faltan 10 min" (§C-13.3 paso 5), fijo e independiente del flag.
+
+Todos los avisos de este modo van por push y, si el usuario tiene WhatsApp vinculado, también
+por WhatsApp (`notifyWhatsAppIfLinked`, D-10) — sujeto a la misma ventana de 24h de siempre
+(§C-13.10): si está cerrada, el envío por WhatsApp degrada en silencio y el push sigue llegando.
 
 ### C-13.6. Compra de créditos / upgrade de plan
 
@@ -1448,17 +1507,17 @@ Con el `wa_id` vinculado a un usuario:
 - **Imagen:** se descarga el media vía Graph API con `WHATSAPP_ACCESS_TOKEN` (`packages/core/src/notifications/whatsapp.ts:fetchWhatsAppMedia`), se sube a `evidence-photos/{user_id}/{block_id}/{ts}.ext` (mismo bucket/convención que la PWA), se resuelve `block_id` como el único bloque del usuario en `awaiting_start_photo` **o** `awaiting_photo` (si hay 0 o >1 candidatos entre ambos estados, se responde pidiendo aclarar en la PWA en vez de adivinar) y se llama `verifyPhoto()` (`apps/flowday/lib/verify-photo.ts`) con la `phase` que corresponda al estado encontrado, sin duplicar lógica — mismo pre-cobro (INV-2), mismo router de IA, misma tabla `evidence`.
 - **Texto:** comandos cortos — `saldo` (balance de créditos), `racha` (streak actual), `saltar` (transiciona el bloque activo/`awaiting_start_photo`/`awaiting_photo` vía `canTransition`, `apps/flowday/lib/blocks/state-machine.ts`); la palabra clave de arranque (ver abajo); cualquier otro texto recibe un mensaje de ayuda corto.
 
-**Envío de mensajes.** `sendWhatsAppText()` (`packages/core/src/notifications/whatsapp.ts`) responde solo dentro de la ventana de sesión de 24 h que abre el mensaje inbound del usuario — texto libre, nunca plantillas en esta fase, por lo que no introduce costo nuevo (el único gasto de IA sigue siendo el ya cubierto por AR-9/§C-9).
+**Envío de mensajes.** `sendWhatsAppText()` (`packages/core/src/notifications/whatsapp.ts`) solo entrega dentro de la ventana de sesión de 24 h — texto libre, nunca plantillas en esta fase, por lo que no introduce costo nuevo (el único gasto de IA sigue siendo el ya cubierto por AR-9/§C-9). La mayoría de los envíos son respuestas directas a un inbound (dentro de la misma petición). Los avisos del scheduler (§C-13.3/§C-13.5, D-10 — foto de inicio, foto de fin, bloque saltado) son la excepción: los dispara un cron, no un inbound, vía `notifyWhatsAppIfLinked()` (`apps/flowday/lib/notify/whatsapp.ts`), que solo intenta el envío si el usuario tiene `whatsapp_links.phone_e164` vinculado. Como el usuario típicamente ya escribió "comenzar" esa mañana, la ventana suele seguir abierta; si no lo está, Meta rechaza el envío y `sendWhatsAppText` degrada en silencio (el push sigue llegando igual) — nunca se recurre a una plantilla para forzar la entrega.
 
 **Guía diaria secuencial por palabra clave (2.1.2, D-10) [NORMATIVO].** El usuario, no la app, inicia la conversación de cada día — así toda respuesta cae dentro de la ventana de 24 h que él mismo abrió y **nunca hace falta una plantilla aprobada por Meta ni hay costo por mensaje** (a diferencia de lo diferido en D-8/§C-13.10 arriba, que sigue sin resolverse porque sigue sin ser necesario).
 
 - **Palabra clave:** `handleCommand` reconoce `/^(comenzar|empezar|iniciar|start|dale)$/i` (case-insensitive, sin distinguir acentos). Al recibirla:
   1. Llama `getOrComputeDailyPlan(userId, hoy)` (§C-26, `apps/flowday/lib/planning/daily-plan.ts`) — genera o reutiliza (cache por hash) el plan del día y crea los `blocks` (`pending`) que falten.
   2. El scheduler (job `schedule`, §C-12.2) ya transiciona a `awaiting_start_photo` los bloques cuya hora de inicio llegó; si el primer bloque `pending`/`awaiting_start_photo` del día todavía no llegó a su hora, el mensaje avisa igualmente cuál es y a qué hora empieza.
-  3. Responde: *"Buenos días! Hoy empezamos con **{label}** ({start}–{end}). Mándame una foto cuando arranques."*
-- **Foto de inicio verificada** (`phase='start'`, transición a `active`): responde *"✓ Arrancado. Nos vemos a las {end} con la foto de que terminaste."*
+  3. Responde: *"Buenos días! Hoy empezamos con **{label}** ({start}–{end}). Mándame una foto cuando arranques."* — si el primer bloque ya está en `awaiting_start_photo` (el scheduler llegó primero), el aviso con los `PHOTO_WINDOW_MIN` minutos (§C-13.5) ya se mandó por separado; este mensaje solo confirma cuál es.
+- **Foto de inicio verificada** (`phase='start'`, transición a `active`): responde *"✓ Arrancado. Nos vemos con la foto de que terminaste."*
 - **Foto de fin verificada** (`phase='end'`, transición a `verified`): busca el siguiente bloque `pending` del día en orden cronológico.
-  - Si hay uno: *"✓ {label} verificado. Siguiente: **{next.label}** ({next.start}–{next.end})."*
+  - Si hay uno: *"✓ {label} verificado. Siguiente: **{next.label}** ({next.start}–{next.end}). Mándame la foto cuando arranques."*
   - Si no hay más: *"✓ Eso es todo por hoy. Buen trabajo — escribe **comenzar** mañana para seguir."* — este es el cierre que le recuerda al usuario abrir él mismo la conversación de mañana, cerrando el ciclo sin dejar ningún mensaje proactivo pendiente.
 
 ---
@@ -2009,7 +2068,23 @@ Ollama (`qwen3:8b`) servía como respaldo de texto best-effort, incluida una rut
 
 ### D-10. Guía diaria por WhatsApp sin plantilla: el usuario siempre inicia la conversación (§C-13.10, §C-26)
 
-D-8 dejó la mensajería proactiva por WhatsApp deliberadamente diferida por su costo (plantilla aprobada por Meta, cobro por mensaje). Se resuelve sin ese costo: en vez de que la app escriba primero cada mañana, el usuario escribe una palabra clave (`comenzar`/`empezar`/`iniciar`/sinónimos, §C-13.10) para arrancar su día — eso abre la ventana de respuesta libre de 24 h de Meta, y toda la guía subsiguiente (siguiente bloque tras cada foto verificada, cierre del día) vive dentro de esa misma ventana o de las que reabren las fotos del propio usuario. **Nunca es la app quien inicia**, así que no se necesita plantilla ni se introduce costo por mensaje — D-8 sigue vigente como está: mensajería proactiva sigue diferida, simplemente ya no hace falta para este flujo. Esto se combina con dos piezas nuevas: la implementación real de la auto-organización de Calendar/Tasks (§C-26, hasta 2.1.1 solo especificada) y el modelo de doble foto por bloque (inicio + fin, §C-13.2/§C-13.3) para que la guía pueda decir "mándame la foto de que arrancaste" y no solo la de cierre.
+D-8 dejó la mensajería proactiva por WhatsApp deliberadamente diferida por su costo (plantilla aprobada por Meta, cobro por mensaje). Se resuelve sin ese costo: en vez de necesitar una plantilla para escribir primero cada mañana, el usuario escribe una palabra clave (`comenzar`/`empezar`/`iniciar`/sinónimos, §C-13.10) para arrancar su día — eso abre la ventana de respuesta libre de 24 h de Meta. Toda la guía subsiguiente (siguiente bloque tras cada foto verificada, avisos del scheduler en las transiciones de bloque — §C-13.5b —, cierre del día) vive dentro de esa misma ventana o de las que reabren las fotos del propio usuario; el scheduler sí puede enviar sin que un inbound lo dispare directamente (es un cron, §C-13.10 "Envío de mensajes"), pero **nunca fuera de una ventana que el usuario abrió ese mismo día** ni con una plantilla — si la ventana ya cerró, el envío por WhatsApp simplemente no llega (degrada en silencio) y el push sigue cubriendo. Por eso no se necesita plantilla ni se introduce costo por mensaje — D-8 sigue vigente como está: mensajería proactiva *sin ventana abierta* sigue diferida, simplemente ya no hace falta para este flujo. Esto se combina con dos piezas nuevas: la implementación real de la auto-organización de Calendar/Tasks (§C-26, hasta 2.1.1 solo especificada) y el modelo de doble foto por bloque (inicio + fin, §C-13.2/§C-13.3) para que la guía pueda decir "mándame la foto de que arrancaste" y no solo la de cierre.
+
+### D-11. Modo de recordatorio frecuente, opt-in para TDAH/memoria débil (§C-13.5b)
+
+Pedido explícito de accesibilidad: el usuario necesita que la app le recuerde constantemente lo
+que tiene que hacer, no solo en las transiciones de bloque. `profiles.frequent_reminders`
+(default `false` — nunca se activa solo; el usuario lo prende él mismo desde Ajustes,
+`PATCH /api/v1/profile`, §C-11.14) gatea una cadencia escalonada (espaciada lejos del límite,
+cada tick del cron cerca de él) en tres fases: foto de inicio, foto de fin (sin tope — sigue
+para siempre mientras no llegue la evidencia, a diferencia del recordatorio por defecto que para
+a los ~3 avisos) y, la pieza nueva que no existía antes, **durante el propio bloque activo**
+("¿sigues con X? Quedan N min"). El piso de frecuencia real es `TICK_WINDOW_MIN` = 5 min porque
+los crons de n8n (`daily-schedule.json`/`photo-reminder.json`, §C-12.2) corren cada 5 min — no
+hay recordatorio más seguido sin acortar esos crons, algo deliberadamente fuera de este alcance
+(cambiaría la carga de todos los usuarios, no solo los que activan el flag). Igual que el resto
+de avisos del scheduler (D-10), sale por push y, si hay WhatsApp vinculado, también por WhatsApp
+dentro de la ventana de 24h que ya esté abierta.
 
 ---
 
