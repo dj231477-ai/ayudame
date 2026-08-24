@@ -267,3 +267,15 @@ porque `listTasks()` solo miraba la lista `@default`.
 | `hasRoomToday`/`buildPlanPrompt(fixed, nowHHMM)` — nunca asigna en el pasado (§C-26.2b) | `apps/flowday/lib/planning/plan-prompt.ts` |
 | `parsePlanResponse(text, earliestStart)` — filtro de defensa en profundidad | `apps/flowday/lib/planning/plan-prompt.ts` |
 | `computePlan` pasa `nowHHMM` y corta antes de llamar IA si no hay margen | `apps/flowday/lib/planning/daily-plan.ts` |
+
+## Fase 12 — Reagenda de bloques abandonados + saludo según la hora (D-15)
+
+> D-14 solo corrigió lo que la IA podía *proponer*; no tocaba bloques de Calendar ya
+> materializados con hora fija y vencida. Segunda vuelta de la misma prueba real expuso esto.
+
+| Requisito | Archivo |
+|---|---|
+| `computeCatchUp` pura + tests (§C-13.3b) | `apps/flowday/lib/blocks/catch-up.ts` |
+| `nextPendingBlock` — reagenda antes de anunciar/encadenar (§C-13.3b/§C-13.10) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
+| `timeGreeting`/`minutesToHHMM` puras + tests | `apps/flowday/lib/datetime.ts` |
+| Saludo real (`handleStartDay`) en vez de "Buenos días" fijo | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |

@@ -31,18 +31,30 @@ export function localMinutes(date: Date, timeZone: string): number {
   return h * 60 + m;
 }
 
+/** Convierte minutos desde medianoche a 'HH:MM'. Se acota a [00:00, 23:59] (D-15). */
+export function minutesToHHMM(min: number): string {
+  const clamped = Math.max(0, Math.min(Math.round(min), 23 * 60 + 59));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 /** Hora local 'HH:MM' para una tz, a partir de un instante. */
 export function localTimeHHMM(date: Date, timeZone: string): string {
-  const m = localMinutes(date, timeZone);
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  return minutesToHHMM(localMinutes(date, timeZone));
 }
 
 /** Convierte 'HH:MM' o 'HH:MM:SS' a minutos desde medianoche. */
 export function timeToMinutes(t: string): number {
   const [h, m] = t.split(':');
   return Number(h ?? 0) * 60 + Number(m ?? 0);
+}
+
+/** Saludo según la hora local (D-15, §C-13.10): nunca "buenos días" a media tarde. */
+export function timeGreeting(nowMin: number): string {
+  if (nowMin < 12 * 60) return 'Buenos días';
+  if (nowMin < 19 * 60) return 'Buenas tardes';
+  return 'Buenas noches';
 }
 
 /** Offset de una tz respecto a UTC, en minutos, para el instante `date` (positivo = adelante de UTC). */

@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.6 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.7 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -19,6 +19,8 @@
 > **Cambios en 2.1.5 (agosto 2026).** Cierra el círculo de §C-26: al verificarse la foto de fin de un bloque ligado a una tarea de Google Tasks, `verifyPhoto()` marca esa tarea completada ahí mismo (**D-13**, §C-11.5/§C-13.3) — `completeTask()` ya existía pero no estaba conectado a este flujo. Best-effort, nunca revierte la verificación si Google Tasks falla. Deliberadamente NO incluye escribir eventos en Google Calendar ni reordenar tareas (alcance acotado explícitamente por el usuario).
 >
 > **Cambios en 2.1.6 (agosto 2026).** Dos correcciones encontradas en la primera prueba real contra la cuenta real (**D-14**, §C-11.5/§C-26.2b): (1) `listTasks()` ahora lee **todas** las listas de Google Tasks del usuario, no solo `@default` — id compuesto `{listId}:{taskId}` propagado a `blocks.task_id` y a `completeTask` (D-13). (2) El planificador ya no asigna tareas antes de la hora actual del usuario cuando la reorganización se calcula a media jornada — recibe "ahora" como piso en vez de asumir siempre `07:00`.
+>
+> **Cambios en 2.1.7 (agosto 2026).** D-14 no alcanzaba para bloques ya materializados con hora fija de Calendar: seguían mostrando su hora original aunque ya hubiera pasado (**D-15**, §C-13.3b/§C-13.10). (1) Comando/flujo de WhatsApp: el bloque `pending` de menor `start_time` se reagenda a "ahora" (misma duración) si su ventana original ya pasó por completo, antes de anunciarlo — nunca desde el cron pasivo, solo al interactuar (`comenzar`, `¿qué sigue?`, tras verificar). (2) El saludo de `handleStartDay` ahora depende de la hora real (`timeGreeting`) — "Buenos días"/"Buenas tardes"/"Buenas noches" — en vez de decir siempre "Buenos días".
 
 ---
 
@@ -1434,6 +1436,20 @@ Procesamiento:
 
 **Aceptación:** un bloque verificado incrementa el streak como máximo una vez por día y deja un registro en `evidence` enlazado a su `usage_log`.
 
+### C-13.3b. Reagenda de bloques abandonados ("catch-up") — D-15 [NORMATIVO]
+
+Un bloque `pending` cuya ventana original (`end_time`) ya pasó por completo sin que el usuario
+lo arrancara (§C-26.2 lo materializó con una hora fija de Calendar, o el usuario simplemente no
+interactuó a tiempo) se **reagenda a "ahora"**, preservando su duración original, en el momento
+en que el usuario interactúa activamente (`comenzar`, `¿qué sigue?`, o al resolverse el siguiente
+bloque tras una foto de fin verificada, §C-13.10) — nunca lo hace el cron pasivo en segundo
+plano. `computeCatchUp(nowMin, start_time, end_time)` (`apps/flowday/lib/blocks/catch-up.ts`,
+pura y testeada) devuelve el nuevo `{start_time, end_time}` o `null` si la ventana todavía no
+pasó; `nextPendingBlock()` (`apps/flowday/app/internal/whatsapp-inbound/route.ts`) lo aplica al
+bloque `pending` de menor `start_time` antes de anunciarlo. El usuario aprobó explícitamente
+modificar el horario original para esto — la alternativa (mostrar "empecemos ahora" con una hora
+ya vencida hace horas) es la incoherencia que este mecanismo resuelve.
+
 ### C-13.4. Prompt de verificación [NORMATIVO]
 
 `VERIFY_PROMPT` es el `system`; el nombre de tarea va como `userData` (nunca interpolado, §C-10.5).
@@ -1578,10 +1594,11 @@ Con el `wa_id` vinculado a un usuario:
 
 - **Palabra clave:** `handleCommand` reconoce `/^(comenzar|empezar|iniciar|start|dale)$/i` (case-insensitive, sin distinguir acentos). Al recibirla:
   1. Llama `getOrComputeDailyPlan(userId, hoy)` (§C-26, `apps/flowday/lib/planning/daily-plan.ts`) — genera o reutiliza (cache por hash) el plan del día y crea los `blocks` (`pending`) que falten.
-  2. El scheduler (job `schedule`, §C-12.2) ya transiciona a `awaiting_start_photo` los bloques cuya hora de inicio llegó; si el primer bloque `pending`/`awaiting_start_photo` del día todavía no llegó a su hora, el mensaje avisa igualmente cuál es y a qué hora empieza.
-  3. Responde: *"Buenos días! Hoy empezamos con **{label}** ({start}–{end}). Mándame una foto cuando arranques."* — si el primer bloque ya está en `awaiting_start_photo` (el scheduler llegó primero), el aviso con los `PHOTO_WINDOW_MIN` minutos (§C-13.5) ya se mandó por separado; este mensaje solo confirma cuál es.
+  2. Si ya hay algo en curso (`awaiting_start_photo`/`active`), lo confirma tal cual, sin tocar su horario.
+  3. Si no, toma el bloque `pending` de menor `start_time` y lo reagenda a "ahora" si su ventana original ya pasó (`nextPendingBlock`, D-15, §C-13.3b) — así nunca presenta algo con una hora ya vencida.
+  4. Responde: *"{saludo según la hora, D-15} {nombre}! Hoy empezamos con **{label}** ({start}–{end}). Tienes `PHOTO_WINDOW_MIN` minutos para mandarme la foto de que arrancaste una vez empiece."* El saludo (`timeGreeting`, `apps/flowday/lib/datetime.ts`) es "Buenos días"/"Buenas tardes"/"Buenas noches" según la hora local real — nunca fijo.
 - **Foto de inicio verificada** (`phase='start'`, transición a `active`): responde *"✓ Arrancado. Nos vemos con la foto de que terminaste."*
-- **Foto de fin verificada** (`phase='end'`, transición a `verified`): busca el siguiente bloque `pending` del día en orden cronológico.
+- **Foto de fin verificada** (`phase='end'`, transición a `verified`): busca el siguiente bloque `pending` del día vía `nextPendingBlock` (reagenda si ya venció, D-15, §C-13.3b).
   - Si hay uno: *"✓ {label} verificado. Siguiente: **{next.label}** ({next.start}–{next.end}). Mándame la foto cuando arranques."*
   - Si no hay más: *"✓ Eso es todo por hoy. Buen trabajo — escribe **comenzar** mañana para seguir."* — este es el cierre que le recuerda al usuario abrir él mismo la conversación de mañana, cerrando el ciclo sin dejar ningún mensaje proactivo pendiente.
 
@@ -2198,6 +2215,25 @@ IA nunca llegó a invocarse. Dos causas, dos fixes:
    `07:00–21:00` sin importar cuándo se calculaba — si se disparaba a la 1pm, igual podía asignar
    algo a las 10am. Se corrige pasándole la hora actual del usuario como piso (§C-26.2b): nunca
    asigna antes de "ahora".
+
+### D-15. D-14 no alcanzaba para bloques ya materializados: reagenda de abandonados + saludo según la hora (§C-13.3b/§C-13.10)
+
+Tras D-14, el usuario probó "comenzar" de nuevo y volvió a ver el mismo bloque de las 10am a las
+2pm, con saludo "Buenos días". D-14 solo corrigió que la IA **propusiera** algo en el pasado —
+pero el bloque de las 10am venía de un **evento de Calendar** (§C-26.2, hora fija, sin IA,
+materializado ya en la primera prueba) y su fila en `blocks` seguía teniendo la hora original: no
+había ningún mecanismo que la actualizara. Pedido explícito del usuario: "no importa si tiene que
+modificar el horario original, no puede seguir pasando eso". Dos fixes:
+
+1. **Reagenda de abandonados (`computeCatchUp`, §C-13.3b).** Al interactuar (`comenzar`,
+   `¿qué sigue?`, o resolviendo el siguiente bloque tras una foto de fin), si el bloque `pending`
+   de menor `start_time` ya tiene su ventana original vencida por completo, se reagenda a "ahora"
+   con la misma duración — en vez de mostrarse (o auto-transicionarse) con una hora ya pasada.
+   Deliberadamente **no** lo hace el cron pasivo: la reagenda solo ocurre cuando el propio usuario
+   pregunta, para no reasignarle tareas sin que las pida.
+2. **Saludo según la hora (`timeGreeting`).** `handleStartDay` decía siempre "Buenos días". Ahora
+   usa la hora local real del usuario: "Buenos días" (< 12:00), "Buenas tardes" (< 19:00),
+   "Buenas noches" (resto).
 
 ---
 

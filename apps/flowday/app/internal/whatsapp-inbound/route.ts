@@ -8,7 +8,8 @@ import { canTransition, PHOTO_WINDOW_MIN } from '@/lib/blocks/state-machine';
 import { verifyPhoto } from '@/lib/verify-photo';
 import { getOrComputeDailyPlan } from '@/lib/planning/daily-plan';
 import { getDaySummaryText } from '@/lib/blocks/day-summary';
-import { localDate } from '@/lib/datetime';
+import { computeCatchUp } from '@/lib/blocks/catch-up';
+import { localDate, localMinutes, timeGreeting } from '@/lib/datetime';
 
 // =============================================================================
 // Webhook WhatsApp inbound  [NORMATIVO — SPEC §C-13.10]
@@ -212,6 +213,42 @@ async function handlePhoto(
   }
 }
 
+/**
+ * D-15, §C-13.3b: bloque `pending` de menor `start_time` para hoy — reagendando primero
+ * (`computeCatchUp`) cualquiera cuya ventana original ya haya pasado por completo, para nunca
+ * presentar algo incoherente como "empecemos ahora" con una hora ya vencida. Solo se toca al
+ * interactuar activamente (comenzar/¿qué sigue?/tras verificar), nunca desde el cron pasivo.
+ */
+async function nextPendingBlock(
+  svc: ReturnType<typeof createServiceClient>,
+  userId: string,
+  today: string,
+  tz: string,
+): Promise<{ label: string; start_time: string; end_time: string } | null> {
+  const { data: blocks } = await svc
+    .from('blocks')
+    .select('id, label, start_time, end_time')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .eq('status', 'pending');
+
+  const candidates = blocks ?? [];
+  if (candidates.length === 0) return null;
+
+  const nowMin = localMinutes(new Date(), tz);
+  const withEffective = await Promise.all(
+    candidates.map(async (b) => {
+      const catchUp = computeCatchUp(nowMin, b.start_time, b.end_time);
+      if (!catchUp) return { label: b.label, start_time: b.start_time, end_time: b.end_time };
+      await svc.from('blocks').update(catchUp).eq('id', b.id);
+      return { label: b.label, ...catchUp };
+    }),
+  );
+
+  withEffective.sort((a, b) => a.start_time.localeCompare(b.start_time));
+  return withEffective[0] ?? null;
+}
+
 /** D-10: tras cada foto de fin verificada, anuncia el siguiente bloque `pending` del día o cierra. */
 async function announceNextBlock(
   svc: ReturnType<typeof createServiceClient>,
@@ -222,15 +259,7 @@ async function announceNextBlock(
   const tz = profile?.timezone ?? 'America/Bogota';
   const today = localDate(new Date(), tz);
 
-  const { data: next } = await svc
-    .from('blocks')
-    .select('label, start_time, end_time')
-    .eq('user_id', userId)
-    .eq('date', today)
-    .eq('status', 'pending')
-    .order('start_time', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const next = await nextPendingBlock(svc, userId, today, tz);
 
   if (next) {
     await sendWhatsAppText(
@@ -354,15 +383,7 @@ async function handleWhatsNext(
     return;
   }
 
-  const { data: next } = await svc
-    .from('blocks')
-    .select('label, start_time, end_time')
-    .eq('user_id', userId)
-    .eq('date', today)
-    .eq('status', 'pending')
-    .order('start_time', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const next = await nextPendingBlock(svc, userId, today, tz);
 
   if (next) {
     await sendWhatsAppText(phone, `Nada activo ahora. Siguiente: ${next.label} (${next.start_time}–${next.end_time}).`);
@@ -385,7 +406,10 @@ async function handleStartDay(
 ): Promise<void> {
   const { data: profile } = await svc.from('profiles').select('timezone, full_name').eq('id', userId).single();
   const tz = profile?.timezone ?? 'America/Bogota';
-  const greeting = profile?.full_name ? `Buenos días ${profile.full_name}!` : 'Buenos días!';
+  const nowMin = localMinutes(new Date(), tz);
+  // D-15: "Buenos días" a las 2pm no tiene sentido — el saludo sigue la hora real del usuario.
+  const period = timeGreeting(nowMin);
+  const greeting = profile?.full_name ? `${period} ${profile.full_name}!` : `${period}!`;
   const today = localDate(new Date(), tz);
 
   let plan: Awaited<ReturnType<typeof getOrComputeDailyPlan>>;
@@ -401,31 +425,37 @@ async function handleStartDay(
     return;
   }
 
-  const { data: first } = await svc
+  // ¿Ya hay algo en curso (arrancado o esperando foto)? Se muestra tal cual, sin reagendar —
+  // el catch-up (D-15) solo aplica a bloques 'pending' que nunca llegaron a arrancar.
+  const { data: inProgress } = await svc
     .from('blocks')
     .select('label, start_time, end_time, status')
     .eq('user_id', userId)
     .eq('date', today)
-    .in('status', ['pending', 'awaiting_start_photo', 'active'])
+    .in('status', ['awaiting_start_photo', 'active'])
     .order('start_time', { ascending: true })
     .limit(1)
     .maybeSingle();
 
-  if (!first) {
+  if (inProgress) {
+    const msg =
+      inProgress.status === 'awaiting_start_photo'
+        ? `${greeting} Ya tienes ${inProgress.label} (${inProgress.start_time}–${inProgress.end_time}) esperando tu foto de inicio.`
+        : `${greeting} Sigues con ${inProgress.label} (${inProgress.start_time}–${inProgress.end_time}).`;
+    await sendWhatsAppText(phone, msg);
+    return;
+  }
+
+  const next = await nextPendingBlock(svc, userId, today, tz);
+
+  if (!next) {
     const summary = await getDaySummaryText(svc, userId, tz);
     await sendWhatsAppText(phone, `${greeting} ¡Ya completaste todo lo de hoy!${summary} Buen trabajo.`);
     return;
   }
 
-  // Si el scheduler ya transicionó el bloque a awaiting_start_photo, ese aviso (con los
-  // PHOTO_WINDOW_MIN minutos, §C-13.5) ya se mandó por separado — este mensaje solo confirma.
-  const photoHint =
-    first.status === 'awaiting_start_photo'
-      ? ''
-      : ` Tienes ${PHOTO_WINDOW_MIN} minutos para mandarme la foto de que arrancaste una vez empiece.`;
-
   await sendWhatsAppText(
     phone,
-    `${greeting} Hoy empezamos con ${first.label} (${first.start_time}–${first.end_time}).${photoHint}`,
+    `${greeting} Hoy empezamos con ${next.label} (${next.start_time}–${next.end_time}). Tienes ${PHOTO_WINDOW_MIN} minutos para mandarme la foto de que arrancaste una vez empiece.`,
   );
 }
