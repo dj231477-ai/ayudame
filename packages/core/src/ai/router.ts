@@ -28,7 +28,7 @@ const TEXT_CEREBRAS_TOKEN_LIMIT = 900_000;
 export async function getAIProvider(modality: AIModality): Promise<AIProvider> {
   if (modality === 'vision') {
     if ((await getDailyUsage('gemini')) < VISION_GEMINI_LIMIT) {
-      return { provider: 'gemini', model: 'gemini-2.5-flash' };
+      return { provider: 'gemini', model: 'gemini-3.6-flash' };
     }
     if (process.env.ANTHROPIC_API_KEY) {
       return { provider: 'claude', model: 'claude-sonnet-4-6' };
@@ -85,7 +85,7 @@ export async function callAI(
       event: 'ai.call_failed',
       user_id: userId,
       provider: provider.provider,
-      error: { code: 'internal' },
+      error: { code: 'internal', message: e instanceof Error ? e.message : String(e) },
     });
     throw e;
   }

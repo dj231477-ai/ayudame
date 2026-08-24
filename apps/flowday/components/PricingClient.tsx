@@ -52,7 +52,7 @@ export function PricingClient({
       {error ? <ErrorCard message={error} /> : null}
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
           Recarga de créditos
         </h2>
         {packages.map((p) => (
@@ -60,7 +60,7 @@ export function PricingClient({
             <div className="flex items-center justify-between">
               <div>
                 <p className="font-medium capitalize">{p.id}</p>
-                <p className="text-xs text-neutral-500">${p.credits_usd.toFixed(2)} de saldo</p>
+                <p className="text-xs text-neutral-600">${p.credits_usd.toFixed(2)} de saldo</p>
               </div>
               <Button disabled={busy === p.id} onClick={() => checkout('package', p.id)}>
                 {busy === p.id ? '…' : `$${p.price_usd}`}
@@ -72,13 +72,13 @@ export function PricingClient({
 
       {proActive || teamActive ? (
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">Planes</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-600">Planes</h2>
           {proActive ? (
             <Card>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium">Pro</p>
-                  <p className="text-xs text-neutral-500">
+                  <p className="text-xs text-neutral-600">
                     ${plans.pro.monthly_usd}/mes · historial ilimitado, Calendar, analytics
                   </p>
                 </div>
@@ -93,7 +93,7 @@ export function PricingClient({
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium">Team</p>
-                  <p className="text-xs text-neutral-500">
+                  <p className="text-xs text-neutral-600">
                     ${plans.team.monthly_per_seat_usd}/usuario/mes (mín. {plans.team.min_seats})
                   </p>
                 </div>
@@ -109,7 +109,7 @@ export function PricingClient({
         </section>
       ) : null}
 
-      <p className="text-xs text-neutral-500">
+      <p className="text-xs text-neutral-600">
         Los créditos no son reembolsables salvo fallo del sistema. Precios en USD; Stripe ajusta
         impuestos y moneda local.
       </p>

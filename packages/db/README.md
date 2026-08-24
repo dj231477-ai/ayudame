@@ -17,7 +17,7 @@
 1. Compartidas: `migrations/000` … `migrations/010`
 2. Vistas: `views/public_profiles.sql`
 3. Storage: `storage/buckets.sql`
-4. App FlowDay: `apps/flowday/db/migrations/100` … `103`
+4. App FlowDay: `apps/flowday/db/migrations/100` … `105`
 
 > Migraciones **primero**, luego el deploy de la app (§C-19.2). Estrategia expand→migrate→contract (§C-19.3).
 
@@ -42,6 +42,8 @@
 | `101_evidence.sql` | `evidence` | append-only (INV-11) |
 | `102_habits.sql` | `habits` | CRUD propio |
 | `103_challenges.sql` | `challenges`, `challenge_members` | RLS sin recursión (helpers definer) |
+| `104_verification_queue.sql` | `verification_queue` | cola de reproceso cuando `ai_vision_exhausted` (§C-14.3 D-2); RLS: usuario solo lee su fila |
+| `105_google_tokens.sql` | `google_tokens` | interna; refresh/access token cifrados (AES-256-GCM, `TOKEN_ENCRYPTION_KEY`) |
 
 ## Aplicar
 

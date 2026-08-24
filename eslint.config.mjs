@@ -2,6 +2,7 @@
 // ESLint descubre este archivo subiendo desde cada workspace; no se duplica por paquete.
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import globals from 'globals';
 
 export default tseslint.config(
   {
@@ -34,5 +35,18 @@ export default tseslint.config(
     // (Regla afinada por carpeta en apps/flowday; aquí queda el principio general.)
     files: ['**/*.{ts,tsx}'],
     rules: {},
+  },
+  {
+    // Scripts Node.js (herramientas de testing/CI, no código de la app Next) y archivos de
+    // configuración: corren directo con `node`, no en el browser — necesitan sus globals.
+    files: [
+      '**/scripts/**/*.{js,mjs,ts}',
+      '**/e2e/**/*.{js,mjs,ts}',
+      '*.config.{js,mjs,ts}',
+      '**/*.config.{js,mjs,ts}',
+    ],
+    languageOptions: {
+      globals: globals.node,
+    },
   },
 );

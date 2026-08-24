@@ -1,0 +1,210 @@
+{
+  "info": {
+    "name": "FlowDay internal endpoints (n8n contract)",
+    "_postman_id": "flowday-internal-endpoints",
+    "description": "SPEC §C-11.7, §C-12.3, §C-18.6. Prueba el contrato HTTP que n8n consume: auth por secreto compartido en /internal/*, firma HMAC en /api/v1/webhooks/n8n. Requiere `npm run dev:flowday` corriendo.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "scheduler/run - schedule job (200)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-internal-secret", "value": "{{internal_admin_secret}}" },
+          { "key": "content-type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/internal/scheduler/run",
+        "body": { "mode": "raw", "raw": "{\"job\":\"schedule\"}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('ok:true', () => pm.expect(pm.response.json().ok).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "scheduler/run - reminders job (200)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-internal-secret", "value": "{{internal_admin_secret}}" },
+          { "key": "content-type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/internal/scheduler/run",
+        "body": { "mode": "raw", "raw": "{\"job\":\"reminders\"}" }
+      },
+      "event": [
+        { "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"] } }
+      ]
+    },
+    {
+      "name": "scheduler/run - briefing job (200)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-internal-secret", "value": "{{internal_admin_secret}}" },
+          { "key": "content-type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/internal/scheduler/run",
+        "body": { "mode": "raw", "raw": "{\"job\":\"briefing\"}" }
+      },
+      "event": [
+        { "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"] } }
+      ]
+    },
+    {
+      "name": "scheduler/run - wrong secret (401)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-internal-secret", "value": "wrong-secret-on-purpose" },
+          { "key": "content-type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/internal/scheduler/run",
+        "body": { "mode": "raw", "raw": "{\"job\":\"schedule\"}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 401', () => pm.response.to.have.status(401));",
+              "pm.test('code unauthorized', () => pm.expect(pm.response.json().error.code).to.eql('unauthorized'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "scheduler/run - bad job body (400)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-internal-secret", "value": "{{internal_admin_secret}}" },
+          { "key": "content-type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/internal/scheduler/run",
+        "body": { "mode": "raw", "raw": "{\"job\":\"not-a-real-job\"}" }
+      },
+      "event": [
+        { "listen": "test", "script": { "exec": ["pm.test('status 400', () => pm.response.to.have.status(400));"] } }
+      ]
+    },
+    {
+      "name": "monetization/run (200)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "x-internal-secret", "value": "{{internal_admin_secret}}" }],
+        "url": "{{base_url}}/internal/monetization/run"
+      },
+      "event": [
+        { "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"] } }
+      ]
+    },
+    {
+      "name": "cleanup/run (200)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "x-internal-secret", "value": "{{internal_admin_secret}}" }],
+        "url": "{{base_url}}/internal/cleanup/run"
+      },
+      "event": [
+        { "listen": "test", "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"] } }
+      ]
+    },
+    {
+      "name": "metrics (200)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "x-internal-secret", "value": "{{internal_admin_secret}}" }],
+        "url": "{{base_url}}/internal/metrics"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('has platform key', () => pm.expect(pm.response.json()).to.have.property('platform'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "webhooks/n8n - valid HMAC signature (200)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const bodyObj = { event_id: 'newman-' + Date.now(), action: 'briefing', user_id: '00000000-0000-0000-0000-000000000000', block_id: null, ts: new Date().toISOString() };",
+              "const bodyStr = JSON.stringify(bodyObj);",
+              "pm.variables.set('event_body_json', bodyStr);",
+              "const secret = pm.environment.get('n8n_webhook_secret');",
+              "const sig = CryptoJS.HmacSHA256(bodyStr, secret).toString(CryptoJS.enc.Hex);",
+              "pm.variables.set('flowday_signature', sig);"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('ok:true', () => pm.expect(pm.response.json().ok).to.eql(true));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-flowday-signature", "value": "{{flowday_signature}}" },
+          { "key": "content-type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/api/v1/webhooks/n8n",
+        "body": { "mode": "raw", "raw": "{{event_body_json}}" }
+      }
+    },
+    {
+      "name": "webhooks/n8n - bad signature (401)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "const bodyObj = { event_id: 'newman-badsig-' + Date.now(), action: 'briefing', user_id: '00000000-0000-0000-0000-000000000000', block_id: null, ts: new Date().toISOString() };",
+              "pm.variables.set('event_body_json_bad', JSON.stringify(bodyObj));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 401', () => pm.response.to.have.status(401));",
+              "pm.test('code unauthorized', () => pm.expect(pm.response.json().error.code).to.eql('unauthorized'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "x-flowday-signature", "value": "0000000000000000000000000000000000000000000000000000000000000000" },
+          { "key": "content-type", "value": "application/json" }
+        ],
+        "url": "{{base_url}}/api/v1/webhooks/n8n",
+        "body": { "mode": "raw", "raw": "{{event_body_json_bad}}" }
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+# n8n local (entorno 'local', §C-19.1) — mientras la VM Oracle no tenga capacidad (§C-16).
+# Sin dominio ni TLS: solo localhost. Mismos workflows/envs que apps/flowday/docker/oracle/;
+# al migrar a la VM real, se reusan las mismas variables cambiando APP_URL/DOMAIN.
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports: ['5678:5678']
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PROTOCOL=http
+      - N8N_PORT=5678
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_SECURE_COOKIE=false
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      # n8n bloquea por defecto el acceso a env vars desde expresiones de workflow;
+      # nuestros workflows leen {{$env.APP_URL}} (§C-12.2) a propósito, así que se
+      # habilita explícitamente. Ninguna de estas variables es secreto de producto.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # El workflow whatsapp-inbound firma HMAC dentro de un nodo Code (require('crypto')),
+      # bloqueado por defecto igual que el acceso a env vars.
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      - APP_URL=${APP_URL}
+      - INTERNAL_ADMIN_SECRET=${INTERNAL_ADMIN_SECRET}
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
+    volumes: ['n8n_local_data:/home/node/.n8n']
+    depends_on: [postgres]
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=n8n
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes: ['postgres_local_data:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U n8n']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  n8n_local_data: {}
+  postgres_local_data: {}

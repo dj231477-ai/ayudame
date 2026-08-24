@@ -70,7 +70,7 @@ export function ChallengesClient({ initial }: { initial: Challenge[] }) {
             <li key={c.id}>
               <Card>
                 <p className="font-medium">{c.name}</p>
-                <p className="text-xs text-neutral-500">{c.start_date} → {c.end_date}</p>
+                <p className="text-xs text-neutral-600">{c.start_date} → {c.end_date}</p>
                 <ol className="mt-2 space-y-1">
                   {c.leaderboard.map((e, i) => (
                     <li key={e.user_id} className="flex justify-between text-sm">

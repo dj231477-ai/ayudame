@@ -35,7 +35,11 @@ n8n self-hosted (Oracle Always Free) · Gemini/Groq/Cerebras/Ollama/Claude · Vi
 ## Puesta en marcha
 
 ```bash
-cp .env.example .env.local      # rellena valores (INV-4: secretos solo aquí, nunca en repo)
+cp .env.example .env.local              # rellena valores (INV-4: secretos solo aquí, nunca en repo)
+cp .env.local apps/flowday/.env.local   # Next.js solo lee .env.local de su propio directorio,
+                                         # no del root del monorepo — sin esto, npm run dev:flowday
+                                         # arranca pero cada request falla con
+                                         # "Missing NEXT_PUBLIC_SUPABASE_URL" (gap real, no obvio).
 npm install
 npm run dev                     # turbo run dev (todos los workspaces)
 npm run dev:flowday             # solo la app FlowDay

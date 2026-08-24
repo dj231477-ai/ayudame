@@ -36,3 +36,6 @@ npm-debug.log*
 
 # Oracle VM runtime artifacts (no se versionan certificados ni datos)
 apps/flowday/docker/oracle/certbot/
+
+# Salida de graphify (auditoría de drift puntual, no es artefacto del producto)
+graphify-out/

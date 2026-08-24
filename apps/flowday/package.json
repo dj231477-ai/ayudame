@@ -9,7 +9,13 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:n8n": "node scripts/test-n8n-workflows.mjs",
+    "test:newman": "node scripts/gen-newman-env.mjs && newman run tests/postman/internal-endpoints.postman_collection.json -e tests/postman/local.postman_environment.local.json",
+    "test:e2e:install": "playwright install --with-deps chromium",
+    "test:e2e:fixture": "node e2e/generate-fixture.mjs",
+    "test:e2e": "playwright test",
+    "test:lighthouse": "node scripts/run-lighthouse.mjs"
   },
   "dependencies": {
     "@flowday/core": "*",
@@ -22,10 +28,13 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.1",
     "@types/node": "^20.17.10",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
+    "lighthouse": "^12.2.2",
+    "newman": "^6.2.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",

@@ -15,7 +15,7 @@ export interface LogFields {
   latency_ms?: number;
   provider?: string;
   status?: number;
-  error?: { code: string };
+  error?: { code: string; message?: string };
   // Campos extra permitidos siempre que NO contengan PII/secretos/foto.
   [key: string]: unknown;
 }

@@ -3,10 +3,19 @@
 /**
  * CSP base (§C-8.7). Pragmática: permite Supabase y Stripe. Se endurecerá con nonces en
  * fases posteriores. 'unsafe-inline' en script/style es un baseline conocido a reducir.
+ *
+ * 'unsafe-eval' SOLO en dev: el Fast Refresh/HMR de `next dev` usa eval() internamente
+ * (webpack dev runtime) — sin esto, el CSP rompe TODA la interactividad del cliente en
+ * desarrollo (confirmado con Playwright: ningún onClick/form action llegaba a ejecutarse).
+ * `next build` de producción no usa eval-based HMR, así que production nunca lo necesita.
  */
+const scriptSrc = process.env.NODE_ENV === 'production'
+  ? "script-src 'self' 'unsafe-inline' https://js.stripe.com"
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com";
+
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://js.stripe.com",
+  scriptSrc,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://*.supabase.co",
   "font-src 'self' data:",

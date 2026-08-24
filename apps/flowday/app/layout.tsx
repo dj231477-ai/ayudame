@@ -14,7 +14,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
+  // Sin maximumScale restrictivo: bloquear el zoom con los dedos es una barrera
+  // de accesibilidad para usuarios con baja visión (Lighthouse `meta-viewport`).
   themeColor: '#4f46e5',
 };
 

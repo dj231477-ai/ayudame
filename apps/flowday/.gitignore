@@ -3,3 +3,10 @@ out/
 next-env.d.ts
 .vercel
 *.tsbuildinfo
+
+# Testing tooling (§C-18.6) — secretos/artefactos locales, nunca versionados.
+tests/postman/local.postman_environment.local.json
+e2e/.auth/
+playwright-report/
+test-results/
+lighthouse-report/

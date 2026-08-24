@@ -17,6 +17,7 @@
     "./ai/retry": "./src/ai/retry.ts",
     "./ratelimit": "./src/ratelimit/index.ts",
     "./notifications/push": "./src/notifications/push.ts",
+    "./notifications/whatsapp": "./src/notifications/whatsapp.ts",
     "./security/hmac": "./src/security/hmac.ts",
     "./crypto": "./src/crypto/index.ts",
     "./billing/stripe": "./src/billing/stripe.ts",

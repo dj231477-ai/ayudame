@@ -25,7 +25,7 @@ export default async function HistoryPage() {
     <main className="mx-auto max-w-md space-y-4 px-4 py-8">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Historial</h1>
-        <a href="/dashboard" className="text-sm text-neutral-500 underline">
+        <a href="/dashboard" className="text-sm text-neutral-600 underline">
           Volver
         </a>
       </header>
@@ -38,7 +38,7 @@ export default async function HistoryPage() {
             <li key={e.id}>
               <Card>
                 <div className="flex items-center justify-between">
-                  <span className={e.verified ? 'font-medium text-green-600' : 'text-neutral-500'}>
+                  <span className={e.verified ? 'font-medium text-green-600' : 'text-neutral-600'}>
                     {e.verified ? '✓ Verificado' : '✗ No verificado'}
                   </span>
                   <span className="text-xs text-neutral-400">

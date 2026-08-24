@@ -311,7 +311,7 @@ Una unidad de trabajo está "hecha" cuando: (a) cumple su criterio de aceptació
 - **AR-3. Orquestación self-hosted (n8n en Oracle Always Free).** n8n no toma decisiones de negocio complejas; dispara endpoints y mueve datos. La lógica vive en la app.
 - **AR-4. IA gratuita primero.** Proveedores cloud con free tier (Gemini, Groq, Cerebras, OpenRouter) y Ollama local como respaldo de texto. Claude API solo como fallback opcional de visión.
 - **AR-5. Pagos vía Stripe.** Único procesador. Stripe Tax para IVA. Stripe es la autoridad de estado de suscripción y de compras.
-- **AR-6. Push vía Web Push (VAPID) + FCM.** Sin dependencia de Telegram/WhatsApp.
+- **AR-6. Push vía Web Push (VAPID) + FCM es el canal primario.** WhatsApp Business Cloud API oficial (Meta) es un **canal adicional opt-in** (§C-13.10) — el usuario lo conecta desde Ajustes, nunca es obligatorio ni reemplaza la PWA (login, historial, analytics, pago siguen siendo solo-web). Solo mensajería inbound (el usuario escribe primero): recibir la foto de evidencia y comandos cortos. Nunca mensajería proactiva por WhatsApp sin plantilla aprobada por Meta (eso tiene costo real por mensaje, decisión aparte — ver nota en §C-13.10). Sin dependencia de Telegram.
 - **AR-7. Monorepo con Turborepo.** Desde el día 1; no se migra después.
 - **AR-8. Multi-producto por diseño.** El núcleo no asume que FlowDay es el único producto.
 - **AR-9. Coste objetivo ≈ $0 hasta tracción.** Toda decisión por defecto elige la opción gratuita mientras sea viable; los upgrades son triggers explícitos (§C-16.5, §C-20).
@@ -356,7 +356,8 @@ flowday-platform/
 │   │   ├── billing/
 │   │   │   └── stripe.ts             # cliente Stripe + helpers
 │   │   ├── notifications/
-│   │   │   └── push.ts               # Web Push VAPID
+│   │   │   ├── push.ts               # Web Push VAPID
+    │   │   │   └── whatsapp.ts           # WhatsApp Cloud API (§C-13.10, canal adicional opt-in)
 │   │   ├── retention/
 │   │   │   └── policy.ts             # RETENTION_DAYS por plan
 │   │   ├── events/
@@ -395,27 +396,41 @@ flowday-platform/
     │   ├── app/
     │   │   ├── (auth)/               # dashboard, focus, history, settings
     │   │   ├── (public)/             # landing, pricing, privacy, terms, u/[handle]
-    │   │   └── api/
-    │   │       └── v1/               # API interna versionada (ver §C-11)
-    │   │           ├── blocks/
-    │   │           ├── verify-photo/
-    │   │           ├── credits/
-    │   │           ├── tasks/
-    │   │           ├── billing/{checkout,webhook,portal}/
-    │   │           └── webhooks/n8n/
+    │   │   ├── api/
+    │   │   │   └── v1/               # API interna versionada (ver §C-11)
+    │   │   │       ├── blocks/
+    │   │   │       ├── verify-photo/
+    │   │   │       ├── credits/
+    │   │   │       ├── tasks/
+    │   │   │       ├── billing/{checkout,webhook,portal}/
+    │   │   │       ├── webhooks/n8n/
+    │   │   │       ├── webhooks/whatsapp-inbound/  # §C-13.10, canal adicional opt-in
+    │   │   │       └── whatsapp/link-code/
+    │   │   └── internal/             # solo service, secreto compartido (ver §C-11.7)
+    │   │       ├── scheduler/run/    # tick de agenda (schedule/reminders/briefing), llamado por n8n
+    │   │       ├── monetization/run/
+    │   │       ├── cleanup/run/
+    │   │       └── metrics/
     │   ├── components/               # blocks/, focus/, habits/ (específicos)
     │   ├── lib/
     │   │   ├── verify-photo.ts       # VERIFY_PROMPT + orquestación con @flowday/core/ai
-    │   │   └── google/{tasks,calendar}.ts
+    │   │   ├── blocks/state-machine.ts
+    │   │   └── google/{tasks,calendar,tokens}.ts
     │   ├── hooks/                    # useBlockTimer, usePush, useGoogleTasks, useStreak
-    │   ├── db/migrations/            # 100+ (blocks, evidence, habits, challenges)
+    │   ├── db/migrations/            # 100+ (blocks, evidence, habits, challenges, cola de reverificación, tokens Google)
     │   │   ├── 100_blocks.sql
     │   │   ├── 101_evidence.sql
     │   │   ├── 102_habits.sql
-    │   │   └── 103_challenges.sql
+    │   │   ├── 103_challenges.sql
+    │   │   ├── 104_verification_queue.sql
+    │   │   ├── 105_google_tokens.sql
+    │   │   └── 106_whatsapp_links.sql
     │   ├── n8n/workflows/            # exports JSON (ver §C-12)
     │   ├── public/                   # manifest.json, sw.js, icons/, screenshots/
-    │   └── docker/oracle/            # docker-compose.yml + nginx.conf (ver §C-16)
+    │   └── docker/
+    │       ├── oracle/               # docker-compose.yml + nginx.conf, VM real (ver §C-16)
+    │       └── local/                # docker-compose.yml sin TLS/dominio, solo localhost:5678
+    │                                  # (entorno 'local' §C-19.1; mismo n8n mientras no hay VM)
     │
     └── [future-product]/            # mismo patrón; reusa @flowday/core y @flowday/ui
 ```
@@ -671,6 +686,51 @@ create table challenge_members (
   joined_at    timestamptz not null default now(),
   primary key (challenge_id, user_id)
 );
+
+-- 104_verification_queue.sql  (decisión D-2, §C-14.3: degradación de visión encola en vez de fallar)
+-- Cuando ai_vision_exhausted, verify-photo NO cobra y encola la foto aquí para reproceso
+-- cuando vuelva la cuota. RLS: el usuario solo LEE su propia cola (estado "pendiente de
+-- verificación"); las escrituras/reprocesos los hace el backend con service_role.
+create table verification_queue (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references profiles(id) on delete cascade,
+  block_id      uuid not null references blocks(id) on delete cascade,
+  photo_path    text not null,
+  status        text not null default 'pending', -- 'pending' | 'processing' | 'done' | 'failed'
+  attempts      integer not null default 0,
+  last_error    text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index verification_queue_status_idx on verification_queue(status, created_at);
+create index verification_queue_block_idx on verification_queue(block_id);
+
+-- 105_google_tokens.sql  (Fase 2: credenciales OAuth de Google para acceso offline a
+-- Tasks/Calendar). Tabla interna (§C-8.3): RLS activado sin políticas ⇒ solo service_role;
+-- los tokens jamás llegan al cliente (INV-4). refresh_token/access_token cifrados en reposo
+-- con AES-256-GCM vía TOKEN_ENCRYPTION_KEY (§C-24.2).
+create table google_tokens (
+  user_id       uuid primary key references profiles(id) on delete cascade,
+  refresh_token text not null,  -- cifrado
+  access_token  text,           -- cifrado (cache de corta vida)
+  expiry        timestamptz,
+  scope         text,
+  updated_at    timestamptz not null default now()
+);
+
+-- 106_whatsapp_links.sql  (§C-13.10: WhatsApp como canal adicional opt-in, AR-6).
+-- Vínculo teléfono -> usuario. El código de 6 dígitos prueba posesión del número
+-- (INV-1: nadie reclama un teléfono ajeno). INSERT/UPDATE solo service_role — el
+-- cliente solo LEE su propio vínculo; se confirma vía el webhook de WhatsApp.
+create table whatsapp_links (
+  user_id            uuid primary key references profiles(id) on delete cascade,
+  phone_e164         text unique,             -- null hasta confirmar el vínculo
+  link_code          text,                    -- código de 6 dígitos pendiente
+  link_code_expires  timestamptz,
+  linked_at          timestamptz,
+  created_at         timestamptz not null default now()
+);
+create index whatsapp_links_phone_idx on whatsapp_links(phone_e164);
 ```
 
 ### C-7.3. Storage (`packages/db/storage/buckets.sql`)
@@ -845,6 +905,7 @@ create policy "evidence_select_own" on storage.objects for select
 - Cookies de sesión `HttpOnly`, `Secure`, `SameSite=Lax`.
 - Validación de input con esquema (zod) en cada endpoint (§C-11).
 - Secretos solo desde variables de entorno (INV-4); nunca en el repo.
+- **`script-src` con `'unsafe-eval'` solo en desarrollo** (`NODE_ENV !== 'production'`, `apps/flowday/next.config.mjs`): el Fast Refresh/HMR de `next dev` necesita `eval()`; sin esta excepción el CSP rompe toda la interactividad del cliente en dev (hallado corriendo el E2E de Playwright, §C-18.6 — ningún `onClick`/form action llegaba a ejecutarse). `next build` de producción no usa eval-based HMR, así que production mantiene el CSP estricto sin excepción.
 
 
 ---
@@ -1004,7 +1065,7 @@ import { getDailyUsage } from './usage';
 export async function getAIProvider(modality: AIModality): Promise<AIProvider> {
   if (modality === 'vision') {
     // Visión SOLO en proveedores cloud con visión. NUNCA Ollama (INV-7).
-    if (await getDailyUsage('gemini') < 1400) return { provider: 'gemini', model: 'gemini-2.5-flash' };
+    if (await getDailyUsage('gemini') < 1400) return { provider: 'gemini', model: 'gemini-3.6-flash' };
     if (process.env.ANTHROPIC_API_KEY)        return { provider: 'claude', model: 'claude-sonnet-4-6' };
     throw new AppError('ai_vision_exhausted'); // degradación explícita (§C-14.3)
   }
@@ -1065,7 +1126,7 @@ El `VERIFY_PROMPT` (§C-13.4) recibe el nombre de tarea como `userData`, nunca i
 
 | Proveedor | Modalidad | Modelo | Cuota free (referencia) | Rol |
 |-----------|-----------|--------|--------------------------|-----|
-| Gemini | visión+texto | gemini-2.5-flash | ~1.500 req/día | Visión primaria |
+| Gemini | visión+texto | gemini-3.6-flash | ~1.500 req/día | Visión primaria |
 | Groq | texto | llama-3.3-70b-versatile | ~1.000 req/día | Texto primario |
 | Cerebras | texto | llama3.1-70b | ~1M tokens/día | Overflow texto |
 | Ollama | texto | mistral:7b-instruct-q4_K_M | ilimitado (CPU) | Respaldo texto, embeddings |
@@ -1156,13 +1217,24 @@ Errores: 402 sin créditos; 409 estado inválido; 503/encolado si `ai_vision_exh
 |--------|------|------|
 | POST | `/api/v1/billing/webhook` | Firma Stripe (INV-5) |
 | POST | `/api/v1/webhooks/n8n` | Firma HMAC n8n (INV-5) |
+| POST | `/api/v1/webhooks/whatsapp-inbound` | Firma HMAC n8n (INV-5) — reenviado desde el WhatsApp Trigger de n8n, §C-13.10 |
+
+### C-11.6bis. WhatsApp (canal adicional opt-in, §C-13.10)
+
+| Método | Ruta | Auth | Descripción |
+|--------|------|------|-------------|
+| POST | `/api/v1/whatsapp/link-code` | usuario | Genera un código de 6 dígitos (expira en 15 min) para vincular el número de WhatsApp del usuario. Responde `{code, expires_at}`. |
 
 ### C-11.7. Admin (solo service; no expuesto al cliente)
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
+| POST | `/internal/scheduler/run` | Tick de agenda: `{job:'schedule'\|'reminders'\|'briefing'}`. Transiciones de bloque tz-aware (§C-12.5, INV-12), recordatorios de foto (§C-13.5) y briefing matutino. Llamado por n8n con secreto (cron cada 5 min). |
 | POST | `/internal/monetization/run` | Ejecuta triggers (§C-9.7). Llamado por n8n con secreto. |
 | POST | `/internal/cleanup/run` | Ejecuta retención (§C-15). Llamado por n8n. |
+| GET | `/internal/metrics` | Métricas de plataforma/negocio (§C-17.2): `get_platform_metrics`, uso de IA del día, suscripciones activas por plan. Con secreto. |
+
+Auth de `/internal/*`: header `x-internal-secret` comparado contra `INTERNAL_ADMIN_SECRET` (§C-24.1) — no es el esquema HMAC por evento de §C-12.3, es un secreto compartido fijo, coherente con que estos endpoints los dispara n8n por cron/trigger interno, no un remitente externo variable.
 
 ---
 
@@ -1178,14 +1250,17 @@ n8n es **orquestador sin lógica de negocio**: dispara endpoints firmados y muev
 
 | Workflow | Trigger | Acción | Endpoint que invoca |
 |----------|---------|--------|---------------------|
-| `daily-schedule.json` | Cron cada 5 min (UTC) | Para cada bloque cuyo `start`/`end`/`warning` cae ahora (en tz del usuario), emite evento | `POST /api/v1/webhooks/n8n` |
-| `photo-reminder.json` | Webhook + delay | Si `awaiting_photo` > 15 min, recordatorio (hasta 3×, cada 5 min) | `POST /api/v1/webhooks/n8n` |
-| `morning-briefing.json` | Cron diario (resuelto a 05:00 local) | Push con tareas del día (Google Tasks) | `POST /api/v1/webhooks/n8n` |
+| `daily-schedule.json` | Cron cada 5 min (UTC) | `POST {job:'schedule'}`: la app evalúa, por cada bloque, si `start`/`warning`/`end` cae ahora en la tz del usuario, y transiciona/empuja push | `POST /internal/scheduler/run` |
+| `photo-reminder.json` | Cron cada 5 min (UTC) | `POST {job:'reminders'}`: recordatorio si `awaiting_photo` lleva 15–32 min (§C-13.5) | `POST /internal/scheduler/run` |
+| `morning-briefing.json` | Cron cada 5 min (UTC) | `POST {job:'briefing'}`: push con tareas del día (Google Tasks) cuando son ≈05:00 en la tz del usuario | `POST /internal/scheduler/run` |
 | `monetization.json` | Cron diario | Evalúa métricas y aplica triggers | `POST /internal/monetization/run` |
 | `data-cleanup.json` | Cron 03:00 (UTC) | Borrado por lotes de datos vencidos | `POST /internal/cleanup/run` |
 | `ai-usage-tracker.json` | (opcional) reconciliación horaria | Verifica/normaliza `ai_daily_usage` | RPC / endpoint admin |
+| `whatsapp-inbound.json` | WhatsApp Trigger (webhook de Meta) | Nodo WhatsApp Trigger valida la firma propia de Meta (`X-Hub-Signature-256`) y reenvía el payload crudo firmado con el HMAC de n8n (§C-13.10) | `POST /api/v1/webhooks/whatsapp-inbound` |
 
 > Nota: el incremento primario de `ai_daily_usage` lo hace la app vía `increment_ai_usage` dentro de `callAI` (§C-10.4). `ai-usage-tracker` es solo reconciliación opcional, no la fuente primaria (corrige la ambigüedad del original).
+>
+> **Decisión posterior a la versión original de esta tabla:** los tres workflows de agenda (`daily-schedule`, `photo-reminder`, `morning-briefing`) se implementaron sobre `/internal/scheduler/run` (secreto compartido, §C-11.7) en vez de emitir eventos individuales firmados por HMAC hacia `/api/v1/webhooks/n8n` (§C-12.3). Motivo: la decisión de "es hora de X" para un tick recurrente de cron vive mejor resuelta enteramente en la app (mismo principio que ya establece §C-12.5), sin que n8n tenga que calcular por bloque qué acción disparar. El contrato `POST /api/v1/webhooks/n8n` (§C-12.3) sigue siendo **[NORMATIVO]** y está implementado — queda disponible para eventos discretos disparados externamente (p. ej. un futuro workflow que reaccione a un evento puntual en vez de un tick), pero ningún workflow del catálogo actual lo invoca.
 
 ### C-12.3. Evento de n8n → app [NORMATIVO]
 
@@ -1292,6 +1367,30 @@ ejercicio → ropa/contexto deportivo; descanso → contexto de pausa; rechaza i
 
 - Usuario solicita borrado → backend elimina datos (cascade desde `profiles`), borra fotos de Storage, revoca sesiones. Confirmación al usuario.
 
+### C-13.9. Guía de privacidad en la foto de evidencia [NORMATIVO]
+
+Decisión de mitigación (reemplaza pasar `photo_verify` a tier pagado de Gemini, manteniendo AR-9 coste≈$0): dado que el tier gratuito de Gemini permite a Google usar el contenido enviado para mejorar sus productos (a diferencia de Groq/Cerebras, que no entrenan con datos en ningún tier — ver corrección en §C-15.6), la mitigación es **minimizar el dato sensible en origen** en vez de pagar por que el proveedor no lo use.
+
+`@flowday/ui/PhotoCapture` muestra **siempre**, antes de cada captura, un aviso fijo (no descartable) con esta guía:
+
+> Por tu seguridad: no muestres tu rostro ni el de otras personas, documentos de identidad, matrículas, direcciones o pantallas con información bancaria o médica. Enfoca solo lo necesario para mostrar la tarea.
+
+Esto es una guía al usuario, no un filtro técnico — FlowDay no puede garantizar que la foto no contenga datos sensibles, solo reducir la probabilidad guiando la composición. Se refleja también en `(public)/privacy` (§C-15.6).
+
+### C-13.10. Canal WhatsApp (inbound, opt-in) [NORMATIVO]
+
+WhatsApp Business Cloud API oficial (Meta) es un **canal adicional opt-in** (AR-6): nunca reemplaza la PWA ni Web Push/FCM, que siguen siendo el canal primario. Solo mensajería **inbound** (el usuario escribe primero) — nunca mensajería proactiva por WhatsApp sin plantilla aprobada por Meta, porque eso tiene costo real por mensaje (decisión deliberadamente diferida, fuera de esta fase).
+
+**Vínculo teléfono → usuario.** El usuario genera un código desde `Ajustes` (`POST /api/v1/whatsapp/link-code`, §C-11.6bis): 6 dígitos, expira en 15 min, se guarda en `whatsapp_links` (§C-7.2). Envía `LINK <código>` por WhatsApp al número de FlowDay; si el código no expiró, el número (`wa_id`, formato E.164) queda vinculado (`whatsapp_links.phone_e164`/`linked_at`). Sin vínculo confirmado, cualquier otro mensaje se ignora salvo el propio comando `LINK`.
+
+**Recepción de mensajes.** El workflow n8n `whatsapp-inbound.json` (§C-12.2) usa el nodo WhatsApp Trigger, que maneja el handshake `hub.challenge` y valida la firma `X-Hub-Signature-256` propia de Meta — n8n no decide negocio (AR-3), solo reenvía el payload crudo firmado con el mismo HMAC (`N8N_WEBHOOK_SECRET`) que el resto de eventos de n8n (INV-5) a `POST /api/v1/webhooks/whatsapp-inbound` (§C-11.6). La app procesa cada mensaje con `processOnce(message.id, 'whatsapp', ...)` (INV-6, `packages/core/src/events/idempotency.ts`).
+
+Con el `wa_id` vinculado a un usuario:
+- **Imagen:** se descarga el media vía Graph API con `WHATSAPP_ACCESS_TOKEN` (`packages/core/src/notifications/whatsapp.ts:fetchWhatsAppMedia`), se sube a `evidence-photos/{user_id}/{block_id}/{ts}.ext` (mismo bucket/convención que la PWA), se resuelve `block_id` como el único bloque del usuario en `awaiting_photo` (si hay 0 o >1, se responde pidiendo aclarar en la PWA en vez de adivinar) y se llama `verifyPhoto()` (`apps/flowday/lib/verify-photo.ts`) sin duplicar lógica — mismo pre-cobro (INV-2), mismo router de IA, misma tabla `evidence`.
+- **Texto:** comandos cortos — `saldo` (balance de créditos), `racha` (streak actual), `saltar` (transiciona el bloque activo/`awaiting_photo` vía `canTransition`, `apps/flowday/lib/blocks/state-machine.ts`); cualquier otro texto recibe un mensaje de ayuda corto.
+
+**Envío de mensajes.** `sendWhatsAppText()` (`packages/core/src/notifications/whatsapp.ts`) responde solo dentro de la ventana de sesión de 24 h que abre el mensaje inbound del usuario — texto libre, nunca plantillas en esta fase, por lo que no introduce costo nuevo (el único gasto de IA sigue siendo el ya cubierto por AR-9/§C-9).
+
 ---
 
 ## C-14. Casos límite y manejo de errores
@@ -1347,6 +1446,7 @@ Los errores técnicos nunca se muestran crudos; siempre se mapean (M4/R15).
 | Historial de bloques/hábitos | Analytics personal | Supabase DB |
 | Suscripción push | Notificaciones | `push_subscriptions` |
 | Consumo de créditos | Facturación y soporte | `usage_log`, `credit_purchases` |
+| Número de WhatsApp (opt-in, §C-13.10) | Vincular el canal WhatsApp para recibir evidencia/comandos | `whatsapp_links` |
 
 **No se recopila:** GPS, contenido de tareas Google (solo IDs), datos de salud, telemetría de otras apps (C-1.3).
 
@@ -1380,7 +1480,12 @@ export const RETENTION_DAYS = {
 
 ### C-15.6. Uso de IA y datos
 
-Las fotos se envían a proveedores de IA (Gemini/Claude) solo para verificación, vía URL firmada efímera, y no se usan para entrenar (según términos del proveedor). Esto se declara en Privacy.
+Las fotos se envían a proveedores de IA (Gemini/Claude) solo para verificación, vía URL firmada efímera. El uso que el proveedor le da a ese contenido **depende del proveedor y del tier**, no es uniforme:
+- **Groq y Cerebras** (texto): no entrenan ni retienen contenido, en ningún tier (política a nivel de cuenta, no por plan) — confirmado en sus términos de servicio.
+- **Claude** (fallback de visión, vía API/tier comercial): no entrena con contenido de clientes bajo sus términos comerciales.
+- **Gemini tier gratuito** (visión primaria, uso por defecto en AR-4): Google **sí** puede usar el contenido enviado —incluidas las fotos— para mejorar sus productos y modelos, y puede pasar por revisión humana. Solo el tier de pago de Gemini garantiza que no se entrena con el contenido.
+
+Dado que AR-9 prioriza coste≈$0 y por defecto la visión corre en el tier gratuito de Gemini, FlowDay **no** garantiza a día de hoy que las fotos de evidencia estén libres de este uso por parte de Google. La mitigación elegida es reducir el dato sensible en la foto en origen, no cambiar de tier (§C-13.9). Esto se declara con precisión en `(public)/privacy` — nunca como una promesa genérica de "no se usa para entrenar" que no es cierta para el tier realmente usado.
 
 ---
 
@@ -1393,21 +1498,24 @@ Las fotos se envían a proveedores de IA (Gemini/Claude) solo para verificación
                                    │            │
                           [ Supabase: Postgres + Auth + Storage ]
                                    │
-[ Oracle Cloud Always Free VM (ARM A1) ]
+[ Oracle Cloud Always Free VM (ARM A1) — 1 OCPU/6GB, §C-16.2 ]
    docker compose:
      - n8n            (orquestación; su propio Postgres interno)
      - postgres       (solo para n8n; INV-8)
-     - ollama         (texto best-effort; nunca ruta crítica de visión)
-     - nginx + certbot (HTTPS para n8n y para exponer ollama internamente)
+     - nginx + certbot (HTTPS para n8n)
+   [ ollama no corre aquí: no cabe junto a n8n+postgres en 2 OCPU/12GB (§C-16.3).
+     El router de texto (§C-10.3) ya trata a Ollama como best-effort/no-crítico:
+     si Groq y Cerebras están agotados y no hay OLLAMA_BASE_URL, la acción de
+     texto falla y se reembolsa (§C-9.6) en vez de degradar silenciosamente. ]
 ```
 
 ### C-16.2. VM Oracle [NORMATIVO en specs]
 
 ```
 Instancia: VM.Standard.A1.Flex (ARM64)
-OCPUs: 4 · RAM: 24 GB · Disco: 200 GB · OS: Ubuntu 22.04 LTS · IP pública incluida
+OCPUs: 1 · RAM: 6 GB · Disco: ≤100 GB · OS: Ubuntu 24.04 Minimal aarch64 · IP pública incluida
 ```
-Presupuesto de RAM (referencia): n8n+Postgres ~5 GB, Ollama 7B ~4.5 GB, SO ~2 GB, libre ~12.5 GB.
+> Oracle redujo el límite Always Free de A1 de 4 OCPU/24 GB a 2 OCPU/12 GB total en la cuenta (cambio de política de la plataforma, no decisión de producto). Decisión de producto: usar solo **1 OCPU/6 GB en esta VM** (n8n+Postgres+Nginx) y reservar el otro 1 OCPU/6 GB del tier gratis para una segunda instancia futura. Presupuesto de RAM de esta VM: n8n+Postgres+Nginx ~3.4 GB, SO ~1 GB, libre ~1.6 GB — **no alcanza para Ollama** (§C-16.3 ajusta límites de recursos y quita Ollama del compose de esta VM; ver nota ahí).
 
 ### C-16.3. docker-compose (ruta canónica `apps/flowday/docker/oracle/`) [ILUSTRATIVO]
 
@@ -1429,22 +1537,17 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
-    deploy: { resources: { limits: { cpus: "2.0", memory: 6g } } }   # E2
+    deploy: { resources: { limits: { cpus: "0.6", memory: "2.5g" } } }   # E2, ajustado a 1 OCPU/6GB (§C-16.2)
     volumes: [ "n8n_data:/home/node/.n8n" ]
     depends_on: [ postgres ]
-  ollama:
-    image: ollama/ollama:latest
-    restart: always
-    ports: ["11434:11434"]            # exponer solo en red interna/VPN, no público
-    deploy: { resources: { limits: { cpus: "1.5", memory: 8g } } }   # E2
-    volumes: [ "ollama_data:/root/.ollama" ]
   postgres:
-    image: postgres:15
+    image: postgres:17
     restart: always
     environment:
       - POSTGRES_DB=n8n
       - POSTGRES_USER=n8n
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    deploy: { resources: { limits: { cpus: "0.3", memory: "0.8g" } } }
     volumes: [ "postgres_data:/var/lib/postgresql/data" ]
   nginx:
     image: nginx:alpine
@@ -1454,9 +1557,9 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
-volumes: { n8n_data: {}, ollama_data: {}, postgres_data: {} }
+volumes: { n8n_data: {}, postgres_data: {} }
 ```
-Ollama se expone **solo** a la app (red privada/VPN o regla de firewall que permita el egress de Vercel mediante túnel/hostname privado); nunca abierto a Internet.
+**Ollama no está en este compose** (no cabe en 1 OCPU/6GB junto a n8n+postgres; §C-16.2 reserva el otro 1 OCPU/6GB del tier gratis para una segunda VM futura, candidata natural para Ollama). Si se activa esa segunda VM, Ollama se agrega ahí como servicio expuesto **solo** en red privada — nunca abierto a Internet. Mientras tanto, `OLLAMA_BASE_URL` queda sin definir en producción y el router de texto (§C-10.3) falla esa acción puntual con reembolso (§C-9.6) si Groq y Cerebras están agotados, en vez de intentar un host que no existe.
 
 ### C-16.4. Dominios y URLs (placeholder `flowday.app`) [NORMATIVO en proceso]
 
@@ -1540,13 +1643,32 @@ Antes de merge a `main`:
 3. Tests obligatorios (§C-18.2) presentes y verdes para PRs que toquen créditos, router IA, RLS o webhooks (R16).
 4. Migraciones nuevas: numeración monotónica, RLS presente en tablas de usuario.
 
+### C-18.6. Herramientas de testing adicionales (opt-in, no bloquean CI)
+
+Tres herramientas locales/manuales, ninguna forma parte de `turbo run test` ni de `.github/workflows/ci.yml` todavía (decisión explícita — se reevalúa más adelante):
+
+- **`npm run test:n8n`** (`apps/flowday/scripts/test-n8n-workflows.mjs`): confirma que los 5 workflows de n8n (§C-12.2) están importados y activos, y espera su tick real de cron (los 3 de cada 5 min) para verificar que efectivamente llaman a la app y devuelven éxito. `n8n execute --id` no sirve para esto: esta versión de n8n solo lo permite en workflows con nodo "Execute Workflow Trigger", no Schedule Trigger.
+- **`npm run test:newman`** (`apps/flowday/tests/postman/`): colección Postman/Newman que prueba el contrato HTTP de `/internal/*` y `/api/v1/webhooks/n8n` (auth, status codes, formas de respuesta) directo contra la app, sin necesidad de n8n corriendo.
+- **`npm run test:e2e`** (`apps/flowday/e2e/`, Playwright): flujo central completo (crear bloque → activo → foto → verificado) contra un navegador real. Login por Google OAuth no se puede automatizar y no hay bypass en la app, así que `global-setup.ts` crea un usuario real vía Admin API en el **mismo proyecto Supabase de desarrollo** (`.env.local`, no un proyecto de test separado — decisión explícita para evitar setup adicional) e inyecta la sesión como cookies reutilizando `@supabase/ssr` (mismo mecanismo que la app real), evitando el login por UI. `global-teardown.ts` borra el usuario al final (cascade). El paso de verify-photo llama a la IA real (tier gratis de Gemini): costo insignificante (~$0.006 de crédito, §C-9.4) pero real, aceptado a propósito.
+- **`npm run test:lighthouse`** (`apps/flowday/scripts/run-lighthouse.mjs`): audita las páginas públicas (`/`, `/pricing`, `/privacy`, `/terms`) con emulación móvil y reusa el Chromium de Playwright (sin depender de un Chrome del sistema). Solo falla el gate en **accesibilidad** (INV-10 es mobile-first, no opcional); performance queda como informativo porque `next dev` no está minificado y no representa producción — correrlo contra un build real (`next build && next start`) cuando se quiera un número de performance confiable.
+
+**Gaps de entorno local y bugs reales encontrados y corregidos al construir esto** (no específicos de estas herramientas, afectan a cualquiera que levante el proyecto):
+- Next.js solo lee `.env.local` de su propio directorio (`apps/flowday/`), no del root del monorepo — hay que copiarlo ahí también (ver README, "Puesta en marcha").
+- Playwright tampoco carga `.env.local` automáticamente (a diferencia de Next.js, que sí lo hace pero solo desde su propio directorio) — `playwright.config.ts` lo carga a mano al inicio.
+- n8n bloquea por defecto el acceso a variables de entorno desde expresiones de workflow; nuestros workflows leen `{{$env.APP_URL}}` a propósito, así que el compose (local y Oracle) fija `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`.
+- Postgres 15 ya no es compatible con versiones recientes de n8n (pide 17+, 16 en modo compatibilidad); ambos compose usan `postgres:17`.
+- **CSP rompía la interactividad del cliente en `next dev`**: el Fast Refresh/HMR de webpack usa `eval()`, bloqueado por nuestro `script-src`. Corregido en `next.config.mjs` con `'unsafe-eval'` solo cuando `NODE_ENV !== 'production'` (detalle en §C-8.7).
+- **El rate limiter de Upstash no degradaba ante una instancia inalcanzable** (solo ante credenciales *ausentes*): una URL de Redis con DNS caído tumbaba `verify-photo` entero con un 500 genérico, antes de siquiera llegar al pre-cobro. Corregido en `packages/core/src/ratelimit/index.ts`: ahora `limitUser`/`limitProvider` degradan a "permitir" también si la llamada de red falla, no solo si falta configurar.
+- El usuario de prueba de Playwright, creado vía Admin API, se salta `app/auth/callback/route.ts` (donde se otorga el stipend de alta) — `global-setup.ts` lo replica llamando `grant_signup_stipend` directamente con la misma fuente de precios (INV-3), para que `verify-photo` tenga saldo con qué cobrar.
+- **`gemini-2.5-flash` (el modelo de visión) ya no existe** — Google lo retiró; la API respondía 404 con el mensaje "no longer available to new users, use gemini-3.6-flash". Actualizado en `packages/core/src/ai/router.ts` y aquí (§C-10.3, §C-10.6). Costó diagnosticar porque `callAI` solo logueaba `error.code:'internal'` sin el mensaje real — se corrigió también eso (`LogFields.error` ahora acepta `message?`, §C-17.1).
+
 ---
 
 ## C-19. Estrategia de despliegue y rollback
 
 ### C-19.1. Entornos
 
-- **local** (`localhost:3000`, Supabase local o proyecto dev).
+- **local** (`localhost:3000`, Supabase local o proyecto dev). n8n local: `apps/flowday/docker/local/docker-compose.yml` (sin TLS/dominio, `http://localhost:5678`) — mismos workflows y variables que §C-16.3, cambia solo `APP_URL`/`DOMAIN`. Uso: desarrollo, y como respaldo temporal mientras la VM Oracle (§C-16.2) no tiene capacidad disponible — no reemplaza la VM en staging/producción (no es always-on fuera de la máquina local).
 - **staging** (`staging.flowday.app`, proyecto Supabase staging).
 - **production** (`flowday.app`).
 
@@ -1732,7 +1854,15 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
 
 # Orquestación
 N8N_WEBHOOK_SECRET=                 # HMAC para verificar eventos de n8n
-INTERNAL_ADMIN_SECRET=              # para /internal/* (monetization, cleanup)
+INTERNAL_ADMIN_SECRET=              # para /internal/* (scheduler, monetization, cleanup, metrics)
+
+# Email transaccional (decisión D-3: Resend). Si falta, Mailer degrada a no-op + log.
+RESEND_API_KEY=
+EMAIL_FROM=FlowDay <ops@flowday.app>
+
+# Rate limiting (decisión D-1: Upstash Redis, §C-11.1). Si faltan, degrada a "permitir" en dev.
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
 ```
 
 ### C-24.2. Específicas de FlowDay (`apps/flowday`)
@@ -1741,6 +1871,7 @@ INTERNAL_ADMIN_SECRET=              # para /internal/* (monetization, cleanup)
 NEXT_PUBLIC_APP_URL=https://flowday.app
 GOOGLE_CLIENT_ID=                   # OAuth Google Tasks/Calendar
 GOOGLE_CLIENT_SECRET=
+TOKEN_ENCRYPTION_KEY=               # cifra refresh/access tokens de Google en `google_tokens` (AES-256-GCM, §C-7.2). SOLO backend (INV-4).
 OLLAMA_BASE_URL=https://ollama-internal.flowday.app  # hostname privado de la VM Oracle (NO localhost desde Vercel)
 STRIPE_PRICE_ID_STARTER=
 STRIPE_PRICE_ID_GROWTH=
@@ -1748,6 +1879,13 @@ STRIPE_PRICE_ID_POWER=
 STRIPE_PRICE_ID_PRO_MONTHLY=
 STRIPE_PRICE_ID_PRO_YEARLY=
 STRIPE_PRICE_ID_TEAM=
+
+# Canal WhatsApp opt-in (§C-13.10). WHATSAPP_APP_SECRET no hace falta aquí: la
+# verificación de la firma de Meta la hace el nodo WhatsApp Trigger de n8n, no la app.
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_BUSINESS_ACCOUNT_ID=
+WHATSAPP_ACCESS_TOKEN=
+NEXT_PUBLIC_WHATSAPP_NUMBER=        # +57 311 3629422, se muestra en el botón "Conectar WhatsApp" de Ajustes
 ```
 
 ### C-24.3. Solo en la VM Oracle (no en Vercel)

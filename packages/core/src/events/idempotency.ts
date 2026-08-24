@@ -8,7 +8,7 @@
 import { createServiceClient } from '../auth';
 import { logger } from '../observability/logger';
 
-export type EventSource = 'stripe' | 'n8n';
+export type EventSource = 'stripe' | 'n8n' | 'whatsapp';
 
 /** ¿Ya se procesó este evento? (lectura simple). */
 export async function hasProcessed(eventId: string): Promise<boolean> {

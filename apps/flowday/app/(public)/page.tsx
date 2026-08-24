@@ -31,7 +31,7 @@ export default async function LandingPage() {
 
       <div>
         <SignInButton />
-        <p className="mt-3 text-xs text-neutral-500">
+        <p className="mt-3 text-xs text-neutral-600">
           Recibes saldo inicial gratis para tus primeras verificaciones.
         </p>
       </div>

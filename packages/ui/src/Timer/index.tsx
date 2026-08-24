@@ -7,7 +7,7 @@ export function Timer({ remainingSeconds, label }: { remainingSeconds: number; l
   const s = safe % 60;
   return (
     <div className="text-center">
-      {label ? <p className="text-sm text-neutral-500">{label}</p> : null}
+      {label ? <p className="text-sm text-neutral-600">{label}</p> : null}
       <p className="font-mono text-5xl font-bold tabular-nums">
         {String(m).padStart(2, '0')}:{String(s).padStart(2, '0')}
       </p>

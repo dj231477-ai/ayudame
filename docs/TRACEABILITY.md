@@ -84,6 +84,7 @@
 | Tests pricing/errores (§C-18.2) | `packages/core/src/**/**.test.ts` |
 | Tests RLS aislamiento (§C-18.2) | `apps/flowday/tests/rls.integration.test.ts` |
 | Gate anti-secretos (§C-18.5, INV-4) | `scripts/check-no-secrets.mjs`, `.github/workflows/ci.yml` |
+| Herramientas de testing opt-in (§C-18.6) | `apps/flowday/scripts/test-n8n-workflows.mjs`, `apps/flowday/tests/postman/`, `apps/flowday/e2e/`, `apps/flowday/scripts/run-lighthouse.mjs` |
 
 ## Fase 1 — Núcleo de producto (§C-10, §C-11, §C-13)
 
@@ -106,6 +107,7 @@
 | Créditos API (§C-11.4) | `apps/flowday/app/api/v1/credits/route.ts`, `.../credits/usage/route.ts` |
 | Estados UI carga/error/vacío (§C-14.1) | `packages/ui/src/{Skeleton,ErrorCard,EmptyState}` |
 | Componentes UI (§C-5.2) | `packages/ui/src/{Button,Card,Timer,PhotoCapture,CreditBalance}` |
+| Guía de privacidad en la foto (§C-13.9) | `packages/ui/src/PhotoCapture/index.tsx` (aviso fijo), `apps/flowday/app/(public)/privacy/page.tsx` |
 | Timer Web Worker (§C-22 F1) | `apps/flowday/public/timer-worker.js`, `apps/flowday/hooks/useBlockTimer.ts` |
 | PWA SW + push (§C-1, AR-6) | `apps/flowday/public/sw.js`, `components/PWARegister.tsx`, `hooks/usePush.ts` |
 | Ciclo de bloque (UI) (§C-13.3) | `apps/flowday/components/blocks/DayBoard.tsx` |
@@ -153,6 +155,22 @@
 > Calendar (§C-1.2 #8 "ajustar") no tiene algoritmo especificado en el SPEC; se implementa la
 > **lectura + detección de conflictos** y se difiere el auto-reschedule para no inventar comportamiento.
 
+## Fase 5 — Canal WhatsApp opt-in (AR-6, §C-13.10)
+
+| Requisito | Archivo |
+|---|---|
+| whatsapp_links (§C-7.2) | `apps/flowday/db/migrations/106_whatsapp_links.sql` |
+| Envío WhatsApp (§C-13.10) | `packages/core/src/notifications/whatsapp.ts` (`sendWhatsAppText`, `fetchWhatsAppMedia`) |
+| Vínculo teléfono → usuario (§C-11.6bis) | `apps/flowday/app/api/v1/whatsapp/link-code/route.ts` |
+| UI "Conectar WhatsApp" (§C-13.10) | `apps/flowday/components/SettingsClient.tsx` |
+| Webhook inbound + HMAC + idempotencia (§C-11.6, INV-5/6) | `apps/flowday/app/api/v1/webhooks/whatsapp-inbound/route.ts` |
+| EventSource 'whatsapp' (INV-6) | `packages/core/src/events/idempotency.ts` |
+| Workflow n8n (§C-12.2) | `apps/flowday/n8n/workflows/whatsapp-inbound.json` |
+| Sandbox n8n (crypto + env access) | `apps/flowday/docker/{local,oracle}/docker-compose.yml` |
+| Datos recopilados: teléfono opt-in (§C-15.1) | `apps/flowday/app/(public)/privacy/page.tsx` |
+
 ## Estado
 
 Fases 0–4 completas y verificadas (typecheck/test/lint/build + gate anti-secretos en verde).
+Fase 5 (canal WhatsApp) implementada; pendiente de prueba end-to-end en vivo y de aplicar la
+migración 106 al proyecto Supabase (§C-13.10).

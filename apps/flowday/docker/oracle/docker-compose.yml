@@ -1,6 +1,12 @@
 # Oracle Cloud Always Free (ARM A1) — orquestación FlowDay. SPEC §C-16.3.
 # INV-8: este Postgres es SOLO para n8n; la base de producto es Supabase.
-# E2: límites de CPU/memoria por contenedor. Ollama best-effort, nunca ruta crítica de visión.
+# E2: límites de CPU/memoria por contenedor. Esta VM usa 1 OCPU/6GB (mitad del
+# tier Always Free de A1, ahora 2 OCPU/12GB total en la cuenta, §C-16.2); el otro
+# 1 OCPU/6GB queda reservado para una segunda VM futura (candidata para Ollama).
+# Ollama NO corre en esta VM: no cabe junto a n8n+postgres en 1 OCPU/6GB. El
+# router de texto (§C-10.3) ya trata a Ollama como best-effort/no-crítico: sin
+# OLLAMA_BASE_URL, esa acción falla con reembolso (§C-9.6) en vez de degradar
+# silenciosamente. Vision NUNCA usa Ollama (INV-7), así que esto no la afecta.
 services:
   n8n:
     image: n8nio/n8n:latest
@@ -18,27 +24,24 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
-      # Variables usadas por los workflows (no son secretos de la app de producto):
+      # n8n bloquea por defecto el acceso a env vars desde expresiones de workflow;
+      # nuestros workflows leen {{$env.APP_URL}} (§C-12.2) a propósito, así que se
+      # habilita explícitamente. Ninguna de estas variables es secreto de producto.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # El workflow whatsapp-inbound firma HMAC dentro de un nodo Code (require('crypto')),
+      # bloqueado por defecto igual que el acceso a env vars.
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
       - APP_URL=${APP_URL}
       - INTERNAL_ADMIN_SECRET=${INTERNAL_ADMIN_SECRET}
       - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
     deploy:
       resources:
-        limits: { cpus: '2.0', memory: 6g } # E2
+        limits: { cpus: '0.6', memory: 2.5g } # E2
     volumes: ['n8n_data:/home/node/.n8n']
     depends_on: [postgres]
 
-  ollama:
-    image: ollama/ollama:latest
-    restart: always
-    ports: ['11434:11434'] # exponer solo en red interna/VPN, no público
-    deploy:
-      resources:
-        limits: { cpus: '1.5', memory: 8g } # E2
-    volumes: ['ollama_data:/root/.ollama']
-
   postgres:
-    image: postgres:15
+    image: postgres:17
     restart: always
     environment:
       - POSTGRES_DB=n8n
@@ -46,7 +49,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     deploy:
       resources:
-        limits: { cpus: '1.0', memory: 2g }
+        limits: { cpus: '0.3', memory: 0.8g }
     volumes: ['postgres_data:/var/lib/postgresql/data']
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U n8n']
@@ -66,5 +69,4 @@ services:
 
 volumes:
   n8n_data: {}
-  ollama_data: {}
   postgres_data: {}

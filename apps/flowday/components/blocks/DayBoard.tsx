@@ -172,7 +172,7 @@ function BlockRow({
       <div className="flex items-center justify-between">
         <div>
           <p className="font-medium">{block.label}</p>
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-neutral-600">
             {block.start_time}–{block.end_time} · {block.type} · {block.status}
           </p>
         </div>
@@ -209,7 +209,7 @@ function BlockRow({
           <span className="text-sm font-medium text-green-600">✓ Verificado</span>
         ) : null}
         {block.status === 'skipped' ? (
-          <span className="text-sm text-neutral-500">Saltado</span>
+          <span className="text-sm text-neutral-600">Saltado</span>
         ) : null}
       </div>
     </Card>

@@ -20,7 +20,7 @@ export default async function ChallengesPage() {
     <main className="mx-auto max-w-md space-y-4 px-4 py-8">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Retos</h1>
-        <a href="/dashboard" className="text-sm text-neutral-500 underline">
+        <a href="/dashboard" className="text-sm text-neutral-600 underline">
           Volver
         </a>
       </header>

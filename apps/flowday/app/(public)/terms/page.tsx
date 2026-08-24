@@ -13,7 +13,7 @@ export default async function TermsPage({
     <main className="mx-auto max-w-2xl space-y-4 px-6 py-10 text-sm leading-relaxed">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{en ? 'Terms of Service' : 'Términos de servicio'}</h1>
-        <a href={en ? '/terms' : '/terms?lang=en'} className="text-neutral-500 underline">
+        <a href={en ? '/terms' : '/terms?lang=en'} className="text-neutral-600 underline">
           {en ? 'Español' : 'English'}
         </a>
       </div>

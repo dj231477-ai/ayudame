@@ -46,11 +46,11 @@ export default async function DashboardPage() {
           <h1 className="text-2xl font-bold">
             Hola{profile?.full_name ? `, ${profile.full_name}` : ''}
           </h1>
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-neutral-600">
             Plan {profile?.plan ?? 'free'} · {today}
           </p>
         </div>
-        <nav className="flex flex-wrap justify-end gap-3 text-sm text-neutral-500 underline">
+        <nav className="flex flex-wrap justify-end gap-3 text-sm text-neutral-600 underline">
           <a href="/history">Historial</a>
           <a href="/analytics">Analytics</a>
           <a href="/challenges">Retos</a>
@@ -63,9 +63,9 @@ export default async function DashboardPage() {
           <CreditBalance credits={usdToCredits(balanceUsd)} balanceUsd={balanceUsd} />
         </Card>
         <Card>
-          <p className="text-xs uppercase tracking-wide text-neutral-500">Racha</p>
+          <p className="text-xs uppercase tracking-wide text-neutral-600">Racha</p>
           <p className="mt-1 text-2xl font-bold">{profile?.streak ?? 0}</p>
-          <p className="text-xs text-neutral-500">días</p>
+          <p className="text-xs text-neutral-600">días</p>
         </Card>
       </section>
 

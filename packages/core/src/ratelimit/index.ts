@@ -2,7 +2,9 @@
 // Rate limiting  [SPEC §C-11.1, S5] — decisión D-1: Upstash Redis (serverless).
 // Dos límites: por usuario (~60 req/min) y global por proveedor de IA (burst guard
 // adicional al pre-check de créditos y al conteo diario del router).
-// Si Upstash no está configurado (dev/local), degrada a "permitir" registrando aviso.
+// Si Upstash no está configurado, o si está configurado pero inalcanzable (DNS caído,
+// instancia borrada/pausada), degrada a "permitir" registrando aviso — un rate limiter
+// no debe tumbar el flujo central por una falla de un proveedor externo de terceros.
 // =============================================================================
 
 import { Ratelimit } from '@upstash/ratelimit';
@@ -62,14 +64,24 @@ export async function limitUser(userId: string): Promise<RateResult> {
     logger.warn({ event: 'ratelimit.disabled', user_id: userId });
     return { success: true };
   }
-  const { success } = await l.limit(userId);
-  return { success };
+  try {
+    const { success } = await l.limit(userId);
+    return { success };
+  } catch {
+    logger.warn({ event: 'ratelimit.unreachable', user_id: userId });
+    return { success: true };
+  }
 }
 
 /** Límite global por proveedor de IA (§C-11.1, S5). */
 export async function limitProvider(provider: string): Promise<RateResult> {
   const l = getProviderLimiter();
   if (!l) return { success: true };
-  const { success } = await l.limit(provider);
-  return { success };
+  try {
+    const { success } = await l.limit(provider);
+    return { success };
+  } catch {
+    logger.warn({ event: 'ratelimit.unreachable', provider });
+    return { success: true };
+  }
 }

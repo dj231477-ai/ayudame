@@ -2,9 +2,9 @@
 export function CreditBalance({ credits, balanceUsd }: { credits: number; balanceUsd: number }) {
   return (
     <div>
-      <p className="text-xs uppercase tracking-wide text-neutral-500">Saldo</p>
+      <p className="text-xs uppercase tracking-wide text-neutral-600">Saldo</p>
       <p className="mt-1 text-2xl font-bold tabular-nums">{credits}</p>
-      <p className="text-xs text-neutral-500">créditos (${balanceUsd.toFixed(2)})</p>
+      <p className="text-xs text-neutral-600">créditos (${balanceUsd.toFixed(2)})</p>
     </div>
   );
 }
