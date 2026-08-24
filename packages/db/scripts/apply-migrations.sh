@@ -13,7 +13,7 @@ run() {
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f "$1"
 }
 
-echo "== Compartidas (000–010) =="
+echo "== Compartidas (000–012) =="
 for f in "$ROOT"/migrations/0*.sql; do run "$f"; done
 
 echo "== Vistas =="

@@ -15,6 +15,16 @@ const SERVICE = process.env.SUPABASE_TEST_SERVICE_ROLE_KEY;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
 const hasEnv = Boolean(URL && SERVICE && ANON);
 
+// A-2 (§C-18.2/§C-18.5): en CI se exporta RLS_TESTS_REQUIRED=1. Si entonces falta el entorno
+// de prueba, FALLAMOS en vez de omitir en silencio: INV-1 no puede quedar sin verificar.
+// En desarrollo local (sin esa variable) se sigue omitiendo de forma elegante.
+if (!hasEnv && process.env.RLS_TESTS_REQUIRED === '1') {
+  throw new Error(
+    'Tests RLS requeridos (RLS_TESTS_REQUIRED=1) pero faltan SUPABASE_TEST_URL / ' +
+      'SUPABASE_TEST_ANON_KEY / SUPABASE_TEST_SERVICE_ROLE_KEY (INV-1, §C-18.2).',
+  );
+}
+
 const PASSWORD = 'Test-Passw0rd!';
 
 interface TestUser {

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Source of truth
 
-**[`FlowDay-SPEC.md`](./FlowDay-SPEC.md) (v2.0) is the single source of truth for this project.** Where code and the SPEC differ, the SPEC wins (§C-3 R1). Read the relevant section before implementing anything — the index (`## Índice`) at the top maps every topic to its section number. Sections/blocks marked **[NORMATIVO]** must be implemented as specified (names, signatures, semantics); **[ILUSTRATIVO]** blocks communicate intent and may be adapted as long as the declared contract is respected (§C-3.2).
+**[`FlowDay-SPEC.md`](./FlowDay-SPEC.md) (v2.1.1) is the single source of truth for this project.** Where code and the SPEC differ, the SPEC wins (§C-3 R1). Read the relevant section before implementing anything — the index (`## Índice`) at the top maps every topic to its section number. Sections/blocks marked **[NORMATIVO]** must be implemented as specified (names, signatures, semantics); **[ILUSTRATIVO]** blocks communicate intent and may be adapted as long as the declared contract is respected (§C-3.2).
 
 Do not introduce a dependency, table, endpoint, or env var that isn't in the SPEC without adding it there first (R2). If a task seems to require violating an invariant (§C-2, below), stop and report the conflict instead of working around it (R3).
 
@@ -12,7 +12,7 @@ Do not introduce a dependency, table, endpoint, or env var that isn't in the SPE
 
 ## What this is
 
-FlowDay: a PWA for **photo-verified accountability**. The user blocks out their day into time blocks; finishing a block requires a **photo of evidence**; a **vision AI** (Gemini primary, Claude fallback) verifies the photo matches the task; the result lands in an **immutable history**. Hybrid freemium model: plan (features) + prepaid credits (AI consumption).
+FlowDay: a PWA for **photo-verified accountability**. The user blocks out their day into time blocks; finishing a block requires a **photo of evidence**; a **vision AI** (Gemini always; MiniMax M3 paid fallback once `vision_paid_fallback_active` is on, D-2) verifies the photo matches the task; the result lands in an **immutable history**. Hybrid freemium model: plan (features) + prepaid credits (AI consumption). WhatsApp Business Cloud API is an additional opt-in channel (D-8, §C-13.10) — never a replacement for the PWA.
 
 ## Commands
 
@@ -60,7 +60,9 @@ Database migrations (`packages/db/scripts/apply-migrations.sh`, requires `DATABA
 bash packages/db/scripts/apply-migrations.sh
 ```
 
-Applies, in order (§C-19.2, normative): shared migrations `packages/db/migrations/000`–`010`, then `packages/db/views/public_profiles.sql`, then `packages/db/storage/buckets.sql`, then app migrations `apps/flowday/db/migrations/100`–`105`. **A published migration is never edited** — fix forward with a new file (INV-9). After a schema change, regenerate types: `supabase gen types typescript --linked > packages/core/src/supabase/types.ts`.
+Applies, in order (§C-19.2, normative): shared migrations `packages/db/migrations/000`–`012`, then `packages/db/views/public_profiles.sql`, then `packages/db/storage/buckets.sql`, then app migrations `apps/flowday/db/migrations/100`–`107`. **A published migration is never edited** — fix forward with a new file (INV-9). After a schema change, regenerate types: `supabase gen types typescript --linked > packages/core/src/supabase/types.ts`.
+
+**Migration numbering gap**: `106_reorg_cache.sql` was applied directly to production on 2026-06-22 (Calendar/Tasks auto-organization, §C-26) but its file was never committed — discovered and backfilled 2026-08-24 when reconciling with `origin/master`. `107_whatsapp_links.sql` (not `106`) is the WhatsApp channel migration, numbered after the backfill to avoid colliding with the already-live `106`.
 
 **Local dev gotcha**: Next.js only reads `.env.local` from `apps/flowday/`, not the monorepo root — `cp .env.local apps/flowday/.env.local` after filling the root one, or `npm run dev:flowday` starts but every request 500s with "Missing NEXT_PUBLIC_SUPABASE_URL".
 
@@ -109,7 +111,7 @@ Reusable logic across products belongs in `packages/core` or `packages/ui`; Flow
 
 All AI calls go through `callAI(userId, action, req)` in `packages/core/src/ai/router.ts` — never call a provider directly from a route. n8n never chooses a provider; when it needs AI it calls an app endpoint that uses the router. `callAI` does, in order: pre-charge via `checkAndDeductCredits` (INV-2) → build the prompt via `buildPrompt` (anti-injection, see below) → dispatch to the provider with retry/backoff (`withRetry`) → record usage via `incrementUsage` → refund via `refundCredits` on failure.
 
-Provider selection (`getAIProvider`, §C-10.3): vision uses Gemini while under its daily quota, else Claude if configured, else throws `ai_vision_exhausted` (explicit degradation) — **never Ollama for vision** (INV-7). Text rotates Groq → Cerebras → Ollama by daily quota (`ai_daily_usage` table, reset by date).
+Provider selection (`getAIProvider`, §C-10.3): vision always tries Gemini first; if it throws `ai_vision_exhausted` (quota exhausted, detected at dispatch via a 429), `dispatchWithFallback` retries once with MiniMax M3 when the `vision_paid_fallback_active` flag is on (D-2), else the error propagates (explicit degradation, queued in `verification_queue`). Text rotates Groq → Cerebras by daily quota (`ai_daily_usage` table, reset by date); if both are exhausted, same flag routes to MiniMax M3, else throws `ai_text_exhausted` before charging. Ollama was removed entirely (D-9, §C-25) — too slow (8–12 tok/s) even as best-effort; **never used for vision** (INV-7) even before its removal.
 
 Anti-prompt-injection (§C-10.5, R11): user-supplied data (e.g. `taskName`) is never concatenated into the system instruction. It goes through `buildPrompt` into a delimited, inert `<user_data>` block.
 

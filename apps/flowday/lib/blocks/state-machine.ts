@@ -15,8 +15,10 @@ const VALID_TRANSITIONS: Record<BlockStatus, readonly BlockStatus[]> = {
   skipped: [],
 };
 
-export function canTransition(from: BlockStatus, to: BlockStatus): boolean {
-  return VALID_TRANSITIONS[from].includes(to);
+// `from` se acepta como string porque proviene de columnas de texto de la DB (blocks.status
+// no tiene CHECK). La guarda `?? []` evita un fallo en runtime si llegara un estado desconocido.
+export function canTransition(from: string, to: BlockStatus): boolean {
+  return (VALID_TRANSITIONS[from as BlockStatus] ?? []).includes(to);
 }
 
 export const BLOCK_STATUSES: readonly BlockStatus[] = [

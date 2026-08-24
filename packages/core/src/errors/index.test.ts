@@ -16,6 +16,7 @@ describe('error catalog (§C-14.2)', () => {
     photo_too_large: 400,
     unsupported_media: 400,
     ai_vision_exhausted: 503,
+    ai_text_exhausted: 503,
     rate_limited: 429,
     unauthorized: 401,
     forbidden_plan: 403,

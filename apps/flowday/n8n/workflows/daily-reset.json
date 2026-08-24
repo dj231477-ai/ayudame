@@ -1,13 +1,13 @@
 {
-  "name": "morning-briefing",
-  "_comment": "SPEC §C-12.2 / §C-12.5: cada 5 min; la app envía briefing a los usuarios cuya hora local sea ~05:00 (autoridad de '05:00' = app). Incluye tareas de Google Tasks si están conectadas.",
+  "name": "daily-reset",
+  "_comment": "Fuera del catálogo original §C-12.2 pero necesario para §C-13.3: streak → 0 para usuarios sin bloque verified ese día. Cron 00:05 UTC; la app evalúa en tz del usuario (§C-12.5).",
   "nodes": [
     {
       "parameters": {
-        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] }
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24, "triggerAtHour": 0, "triggerAtMinute": 5 }] }
       },
-      "id": "cron-5min",
-      "name": "Every 5 minutes",
+      "id": "cron-daily-reset",
+      "name": "Daily 00:05 UTC",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
       "position": [260, 300]
@@ -20,10 +20,10 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"job\":\"briefing\"}",
-        "options": {}
+        "jsonBody": "{\"job\":\"daily_reset\"}",
+        "options": { "timeout": 60000 }
       },
-      "id": "call-scheduler",
+      "id": "call-daily-reset",
       "name": "POST /internal/scheduler/run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -34,7 +34,7 @@
     }
   ],
   "connections": {
-    "Every 5 minutes": { "main": [[{ "node": "POST /internal/scheduler/run", "type": "main", "index": 0 }]] }
+    "Daily 00:05 UTC": { "main": [[{ "node": "POST /internal/scheduler/run", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" }
 }

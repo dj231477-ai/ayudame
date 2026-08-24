@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { verifyHmacSignature } from '@flowday/core/security/hmac';
+import { authorizeInternal } from '@/lib/internal-auth';
 import { processOnce } from '@flowday/core/events/idempotency';
 import { logger, newRequestId } from '@flowday/core/observability/logger';
 import { sendWhatsAppText, fetchWhatsAppMedia } from '@flowday/core/notifications/whatsapp';
@@ -10,10 +10,12 @@ import { verifyPhoto } from '@/lib/verify-photo';
 // =============================================================================
 // Webhook WhatsApp inbound  [NORMATIVO — SPEC §C-13.10]
 // n8n ya validó la firma de Meta (X-Hub-Signature-256, nodo WhatsApp Trigger) y
-// reenvía el payload crudo firmado con el mismo HMAC que el resto de eventos de
-// n8n (INV-5). Idempotencia por wamid (INV-6, §C-12.4).
-// Canal ADICIONAL opt-in (AR-6) — nunca reemplaza el flujo de la PWA, solo lo
-// complementa: vincular número, mandar foto de evidencia, comandos cortos.
+// reenvía el payload crudo. Autenticado igual que el resto de /internal/* (D-6,
+// §C-25): secreto compartido en cabecera x-internal-secret, credencial nativa
+// de n8n `FlowDay Internal Admin` (id FLOWDAYADMIN0001) — no HMAC ni $env.
+// Idempotencia por wamid (INV-6). Canal ADICIONAL opt-in (AR-6) — nunca
+// reemplaza el flujo de la PWA, solo lo complementa: vincular número, mandar
+// foto de evidencia, comandos cortos.
 // =============================================================================
 export const dynamic = 'force-dynamic';
 
@@ -47,23 +49,11 @@ function toE164(waId: string): string {
 
 export async function POST(request: Request) {
   const requestId = newRequestId();
-  const secret = process.env.N8N_WEBHOOK_SECRET;
-
-  const raw = await request.text();
-  const signature = request.headers.get('x-flowday-signature') ?? '';
-  if (!secret || !verifyHmacSignature(raw, signature, secret)) {
-    logger.warn({ event: 'webhook.whatsapp.bad_signature', request_id: requestId });
-    return Response.json({ error: { code: 'unauthorized', message: 'invalid signature' } }, { status: 401 });
+  if (!authorizeInternal(request)) {
+    return Response.json({ error: { code: 'unauthorized', message: 'invalid secret' } }, { status: 401 });
   }
 
-  let parsedBody: unknown;
-  try {
-    parsedBody = JSON.parse(raw);
-  } catch {
-    return Response.json({ error: { code: 'bad_request', message: 'invalid json' } }, { status: 400 });
-  }
-
-  const parsed = InboundBody.safeParse(parsedBody);
+  const parsed = InboundBody.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return Response.json({ error: { code: 'bad_request', message: 'invalid payload' } }, { status: 400 });
   }
@@ -76,7 +66,7 @@ export async function POST(request: Request) {
     });
   }
 
-  logger.info({ event: 'webhook.whatsapp.ok', request_id: requestId, route: '/api/v1/webhooks/whatsapp-inbound' });
+  logger.info({ event: 'webhook.whatsapp.ok', request_id: requestId, route: '/internal/whatsapp-inbound' });
   return Response.json({ ok: true });
 }
 
@@ -123,7 +113,8 @@ async function handleUnlinked(
     return;
   }
 
-  const code = match[1];
+  const code = match[1]; // LINK_COMMAND tiene exactamente un grupo de captura: siempre presente si match existe.
+  if (!code) return;
   const { data: pending } = await svc
     .from('whatsapp_links')
     .select('user_id, link_code_expires')

@@ -95,7 +95,7 @@
 | Anti-inyección buildPrompt (§C-10.5, S3) | `packages/core/src/ai/prompt.ts` + test |
 | Reintentos backoff (§C-10.4) | `packages/core/src/ai/retry.ts` |
 | getDailyUsage/incrementUsage (§C-10.3, F2, E4) | `packages/core/src/ai/usage.ts` |
-| Providers (gemini/groq/cerebras/ollama/claude) (§C-10.6) | `packages/core/src/ai/providers/*` |
+| Providers (gemini/groq/cerebras/minimax) (§C-10.6) | `packages/core/src/ai/providers/*` |
 | Rate limiting Upstash (§C-11.1, S5, D-1) | `packages/core/src/ratelimit/index.ts` |
 | Web Push VAPID (§C-5.2, AR-6) | `packages/core/src/notifications/push.ts` |
 | API bloques CRUD (§C-11.2) | `apps/flowday/app/api/v1/blocks/route.ts`, `.../blocks/[id]/route.ts` |
@@ -155,22 +155,47 @@
 > Calendar (§C-1.2 #8 "ajustar") no tiene algoritmo especificado en el SPEC; se implementa la
 > **lectura + detección de conflictos** y se difiere el auto-reschedule para no inventar comportamiento.
 
-## Fase 5 — Canal WhatsApp opt-in (AR-6, §C-13.10)
+## Fase 5 — Sincronización con producción real (SPEC v2.1, PRs #1–#5)
+
+> Trabajo hecho en paralelo directamente sobre `origin/master` (no en este checkout) entre
+> Fase 4 y Fase 6; reconciliado por fusión el 2026-08-24. Detalle operativo completo en la
+> sección `## PROGRESO` al final de `FlowDay-SPEC.md`.
 
 | Requisito | Archivo |
 |---|---|
-| whatsapp_links (§C-7.2) | `apps/flowday/db/migrations/106_whatsapp_links.sql` |
+| Visión siempre Gemini, sin Claude (D-2) | `packages/core/src/ai/router.ts`, `providers/gemini.ts` (maneja 429) |
+| Ruta del fundador a Ollama (revertida en Fase 6, D-9) | — |
+| CSP con nonce por request (§C-8.7, M-4) | `apps/flowday/middleware.ts` |
+| Secreto admin en tiempo constante (M-5) | `apps/flowday/lib/internal-auth.ts` (`authorizeInternal`) |
+| Hardening n8n: credencial nativa + bloqueo `$env` (D-6) | `apps/flowday/n8n/setup-credentials.sh`, `n8n/workflows/*.json`, `docker/{local,oracle}/docker-compose.yml` |
+| Scheduler consolidado (jobs schedule/reminders/briefing/daily_reset/verify_queue) | `apps/flowday/app/internal/scheduler/run/route.ts` |
+| Reconciliación de ai_daily_usage | `apps/flowday/app/internal/ai-usage/reconcile/route.ts`, `n8n/workflows/ai-usage-tracker.json` |
+| Créditos idempotentes/atómicos (C-1, A-2 RLS en CI) | `packages/db/migrations/011_idempotent_credit_purchase.sql`, `012_refund_credits_optional_log.sql`, `packages/core/src/credits/check.test.ts` |
+| Auto-organización Calendar/Tasks (§C-26) | `apps/flowday/lib/google/calendar.ts` |
+| VM de orquestación: Contabo VPS (D-5, revertido en Fase 6, D-7) | — |
+
+## Fase 6 — Canal WhatsApp opt-in (D-8, §C-13.10) + Ollama descartado (D-9) + vuelta a Oracle (D-7)
+
+| Requisito | Archivo |
+|---|---|
+| reorg_cache (§C-26.3, backfill — vivo en prod desde 2026-06-22, sin archivo hasta ahora) | `apps/flowday/db/migrations/106_reorg_cache.sql` |
+| whatsapp_links (§C-7.2) | `apps/flowday/db/migrations/107_whatsapp_links.sql` |
 | Envío WhatsApp (§C-13.10) | `packages/core/src/notifications/whatsapp.ts` (`sendWhatsAppText`, `fetchWhatsAppMedia`) |
-| Vínculo teléfono → usuario (§C-11.6bis) | `apps/flowday/app/api/v1/whatsapp/link-code/route.ts` |
+| Vínculo teléfono → usuario (§C-11.13) | `apps/flowday/app/api/v1/whatsapp/link-code/route.ts` |
 | UI "Conectar WhatsApp" (§C-13.10) | `apps/flowday/components/SettingsClient.tsx` |
-| Webhook inbound + HMAC + idempotencia (§C-11.6, INV-5/6) | `apps/flowday/app/api/v1/webhooks/whatsapp-inbound/route.ts` |
+| Webhook inbound + idempotencia (§C-11.7, INV-6) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` — autenticado igual que el resto de `/internal/*` (D-6, `authorizeInternal`), no HMAC |
 | EventSource 'whatsapp' (INV-6) | `packages/core/src/events/idempotency.ts` |
-| Workflow n8n (§C-12.2) | `apps/flowday/n8n/workflows/whatsapp-inbound.json` |
-| Sandbox n8n (crypto + env access) | `apps/flowday/docker/{local,oracle}/docker-compose.yml` |
+| Workflow n8n (§C-12.2) | `apps/flowday/n8n/workflows/whatsapp-inbound.json` — credencial nativa `FLOWDAYADMIN0001`, URL hardcodeada (D-6) |
 | Datos recopilados: teléfono opt-in (§C-15.1) | `apps/flowday/app/(public)/privacy/page.tsx` |
+| MiniMax M3: fallback de pago visión+texto (D-2/D-9) | `packages/core/src/ai/providers/minimax.ts`, `router.ts` (`dispatchWithFallback`), `errors/index.ts` (`ai_text_exhausted`) |
+| Ollama eliminado (D-9) | `packages/core/src/ai/{types,usage}.ts`, `providers/ollama.ts` borrado |
+| Vuelta a Oracle Always Free, 1 OCPU/6GB sin Ollama (D-7) | `apps/flowday/docker/oracle/{docker-compose.yml,README.md,nginx.conf}` |
+| Infra de testing opt-in (§C-18.6) | `apps/flowday/scripts/test-n8n-workflows.mjs`, `apps/flowday/tests/postman/`, `apps/flowday/e2e/`, `apps/flowday/scripts/run-lighthouse.mjs` |
 
 ## Estado
 
-Fases 0–4 completas y verificadas (typecheck/test/lint/build + gate anti-secretos en verde).
-Fase 5 (canal WhatsApp) implementada; pendiente de prueba end-to-end en vivo y de aplicar la
-migración 106 al proyecto Supabase (§C-13.10).
+Fases 0–5 en producción (`origin/master`, PRs #1–#5). Fase 6 (WhatsApp + Ollama descartado +
+vuelta a Oracle) reconciliada por fusión el 2026-08-24. Migraciones 011/012 (ya aplicadas en
+junio por origin) y 107_whatsapp_links (aplicada 2026-08-24, ver §C-7.2) confirmadas en vivo
+contra el proyecto Supabase; 106_reorg_cache es un backfill del archivo, la tabla ya existía.
+Pendiente: push, y prueba end-to-end en vivo del canal WhatsApp (§C-13.10).

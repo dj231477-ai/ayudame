@@ -16,8 +16,7 @@ export const PROVIDER_LIMIT_UNIT: Record<AIProviderName, LimitUnit> = {
   gemini: 'requests',
   groq: 'requests',
   cerebras: 'tokens',
-  ollama: 'requests',
-  claude: 'requests',
+  minimax: 'requests',
 };
 
 /** Uso de hoy en la unidad límite del proveedor (requests o tokens). Ausencia => 0. */

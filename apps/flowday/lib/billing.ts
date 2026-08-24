@@ -1,6 +1,6 @@
 import 'server-only';
 import { getStripe, type Stripe } from '@flowday/core/billing/stripe';
-import { CREDIT_PACKAGES, type CreditPackageKey } from '@flowday/core/credits/pricing';
+import { CREDIT_PACKAGES, STIPENDS, type CreditPackageKey } from '@flowday/core/credits/pricing';
 import { createServiceClient } from '@/lib/supabase/service';
 
 // Orquestación Stripe (price IDs específicos de la app, §C-24.2). SPEC §C-9.8, §C-11.4, §C-12.4.
@@ -62,8 +62,8 @@ export async function createCheckout(params: {
       {
         mode: 'subscription',
         line_items: [{ price: priceId, quantity }],
-        metadata: { user_id: params.userId, kind: 'subscription', plan },
-        subscription_data: { metadata: { user_id: params.userId, plan } },
+        metadata: { user_id: params.userId, kind: 'subscription', plan, seats: String(quantity) },
+        subscription_data: { metadata: { user_id: params.userId, plan, seats: String(quantity) } },
         ...common,
       },
       opts,
@@ -96,6 +96,13 @@ function mapStatus(s: Stripe.Subscription.Status): 'active' | 'past_due' | 'canc
   return 'canceled';
 }
 
+/** Stipend mensual del plan (§C-9.2): Pro $1.00; Team $2.00 por asiento; Free 0 (su stipend es de alta). */
+function stipendFor(plan: string, seats: number): number {
+  if (plan === 'team') return STIPENDS.team * Math.max(1, seats);
+  if (plan === 'pro') return STIPENDS.pro;
+  return 0;
+}
+
 /** Aplica los efectos de un evento Stripe verificado (§C-12.4). Idempotencia la garantiza el caller. */
 export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
   const svc = createServiceClient();
@@ -110,17 +117,20 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
         const pkg = s.metadata.package as CreditPackageKey;
         const creditsUsd = CREDIT_PACKAGES[pkg]?.credits_usd;
         if (creditsUsd == null) return;
-        await svc.rpc('add_credits', { p_user_id: userId, p_amount: creditsUsd });
-        await svc.from('credit_purchases').insert({
-          user_id: userId,
-          package: pkg,
-          amount_usd: (s.amount_total ?? 0) / 100,
-          credits_added: creditsUsd,
-          stripe_payment_id: typeof s.payment_intent === 'string' ? s.payment_intent : null,
-          status: 'completed',
+        // Acreditación atómica e idempotente por stripe_payment_id (INV-6): un reintento
+        // de Stripe tras fallo parcial NO duplica el saldo. Clave garantizada no nula
+        // (payment_intent o, en su defecto, el id de la sesión).
+        const paymentId = typeof s.payment_intent === 'string' ? s.payment_intent : s.id;
+        await svc.rpc('record_credit_purchase', {
+          p_user_id: userId,
+          p_package: pkg,
+          p_amount_usd: (s.amount_total ?? 0) / 100,
+          p_credits: creditsUsd,
+          p_stripe_payment_id: paymentId,
         });
       } else if (s.metadata?.kind === 'subscription') {
         const plan = s.metadata.plan ?? 'pro';
+        const seats = Math.max(1, Number.parseInt(s.metadata.seats ?? '1', 10) || 1);
         await svc.from('subscriptions').upsert(
           {
             user_id: userId,
@@ -128,10 +138,16 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
             status: 'active',
             stripe_customer_id: typeof s.customer === 'string' ? s.customer : null,
             stripe_subscription_id: typeof s.subscription === 'string' ? s.subscription : null,
+            seats,
           },
           { onConflict: 'user_id' },
         );
         await svc.from('profiles').update({ plan }).eq('id', userId);
+        // Stipend INICIAL del plan (§C-9.2). Última operación del branch: con la dedupe por
+        // event_id de processOnce no se duplica, y no se solapa con invoice.payment_succeeded
+        // (que solo acredita renovaciones, billing_reason 'subscription_cycle').
+        const stipend = stipendFor(plan, seats);
+        if (stipend > 0) await svc.rpc('add_credits', { p_user_id: userId, p_amount: stipend });
       }
       break;
     }
@@ -162,6 +178,23 @@ export async function handleStripeEvent(event: Stripe.Event): Promise<void> {
       if (pi) {
         await svc.from('credit_purchases').update({ status: 'refunded' }).eq('stripe_payment_id', pi);
       }
+      break;
+    }
+    case 'invoice.payment_succeeded': {
+      const inv = event.data.object;
+      // Solo renovaciones: el alta inicial ya acreditó el stipend en checkout.session.completed.
+      if (inv.billing_reason !== 'subscription_cycle') break;
+      const subId =
+        typeof inv.subscription === 'string' ? inv.subscription : (inv.subscription?.id ?? null);
+      if (!subId) break;
+      const { data: sub } = await svc
+        .from('subscriptions')
+        .select('user_id, plan, seats')
+        .eq('stripe_subscription_id', subId)
+        .maybeSingle();
+      if (!sub) break;
+      const stipend = stipendFor(sub.plan, sub.seats ?? 1);
+      if (stipend > 0) await svc.rpc('add_credits', { p_user_id: sub.user_id, p_amount: stipend });
       break;
     }
     default:

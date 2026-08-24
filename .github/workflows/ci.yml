@@ -57,3 +57,39 @@ jobs:
             fi
           done
           exit $fail
+
+  # §C-18.2/§C-18.5: tests de aislamiento RLS (INV-1) contra una instancia Supabase REAL.
+  # Levanta el stack local con la CLI, aplica el esquema en orden y corre los tests. Con
+  # RLS_TESTS_REQUIRED=1, si el entorno faltara, el test FALLA (no se omite en silencio).
+  rls-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install
+        run: npm ci
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start Supabase local stack
+        run: |
+          if [ ! -f supabase/config.toml ]; then printf 'n\nn\n' | supabase init; fi
+          supabase start
+      - name: Apply schema (orden NORMATIVO §C-19.2) + export test env
+        run: |
+          supabase status -o env > /tmp/sb.env
+          {
+            echo "SUPABASE_TEST_URL=$(grep -E '^API_URL=' /tmp/sb.env | cut -d'\"' -f2)"
+            echo "SUPABASE_TEST_ANON_KEY=$(grep -E '^ANON_KEY=' /tmp/sb.env | cut -d'\"' -f2)"
+            echo "SUPABASE_TEST_SERVICE_ROLE_KEY=$(grep -E '^SERVICE_ROLE_KEY=' /tmp/sb.env | cut -d'\"' -f2)"
+          } >> "$GITHUB_ENV"
+          DATABASE_URL="$(grep -E '^DB_URL=' /tmp/sb.env | cut -d'"' -f2)" \
+            bash packages/db/scripts/apply-migrations.sh
+      - name: Run RLS isolation tests (INV-1)
+        working-directory: apps/flowday
+        env:
+          RLS_TESTS_REQUIRED: "1"
+        run: npx vitest run tests/rls.integration.test.ts

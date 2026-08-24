@@ -1,5 +1,7 @@
 import 'server-only';
 import { callAI } from '@flowday/core/ai/router';
+import { refundCredits } from '@flowday/core/credits/check';
+import { ACTION_COSTS } from '@flowday/core/credits/pricing';
 import { AppError } from '@flowday/core/errors';
 import { logger } from '@flowday/core/observability/logger';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -18,6 +20,11 @@ export interface VerifyPhotoInput {
   photoPath: string; // ruta dentro del bucket: {user_id}/{block_id}/{ts}.jpg
   blockType: string;
   taskName: string;
+  /**
+   * true cuando el reproceso viene del drenado de verification_queue (§C-14.3): en ese caso
+   * NO se vuelve a encolar al agotarse la visión (la fila ya está en la cola), solo se propaga.
+   */
+  fromQueue?: boolean;
 }
 
 export interface VerifyPhotoResult {
@@ -49,7 +56,7 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
       imageUrl: signed.signedUrl,
     });
   } catch (e) {
-    if (e instanceof AppError && e.code === 'ai_vision_exhausted') {
+    if (e instanceof AppError && e.code === 'ai_vision_exhausted' && !input.fromQueue) {
       await svc.from('verification_queue').insert({
         user_id: input.userId,
         block_id: input.blockId,
@@ -75,6 +82,10 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
     usage_log_id: ai.usageLogId,
   });
   if (evErr) {
+    // Cobramos pero perdimos el resultado (no se pudo registrar la evidencia): es un fallo del
+    // sistema (§C-9.6). Reembolsamos el crédito ya cobrado (enlazado a ai.usageLogId) antes de
+    // propagar; si el propio reembolso falla, refundCredits lo registra y no enmascaramos el error.
+    await refundCredits(input.userId, ACTION_COSTS.photo_verify, ai.usageLogId).catch(() => {});
     logger.error({ event: 'verify.evidence_insert_failed', user_id: input.userId, error: { code: 'internal' } });
     throw new AppError('internal');
   }

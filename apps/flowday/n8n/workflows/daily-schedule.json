@@ -15,11 +15,9 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.APP_URL}}/internal/scheduler/run",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
-        },
+        "url": "https://ayudame-flowday.vercel.app/internal/scheduler/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "{\"job\":\"schedule\"}",
@@ -29,7 +27,10 @@
       "name": "POST /internal/scheduler/run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 300]
+      "position": [520, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "FLOWDAYADMIN0001", "name": "FlowDay Internal Admin" }
+      }
     }
   ],
   "connections": {

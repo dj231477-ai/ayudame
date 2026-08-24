@@ -1,34 +1,9 @@
 // Next.js config — SPEC §C-8.7 (headers de seguridad), §C-5.3 (transpila packages del monorepo).
 
-/**
- * CSP base (§C-8.7). Pragmática: permite Supabase y Stripe. Se endurecerá con nonces en
- * fases posteriores. 'unsafe-inline' en script/style es un baseline conocido a reducir.
- *
- * 'unsafe-eval' SOLO en dev: el Fast Refresh/HMR de `next dev` usa eval() internamente
- * (webpack dev runtime) — sin esto, el CSP rompe TODA la interactividad del cliente en
- * desarrollo (confirmado con Playwright: ningún onClick/form action llegaba a ejecutarse).
- * `next build` de producción no usa eval-based HMR, así que production nunca lo necesita.
- */
-const scriptSrc = process.env.NODE_ENV === 'production'
-  ? "script-src 'self' 'unsafe-inline' https://js.stripe.com"
-  : "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com";
-
-const csp = [
-  "default-src 'self'",
-  scriptSrc,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https://*.supabase.co",
-  "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com",
-  "frame-src https://js.stripe.com https://hooks.stripe.com",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
-
+// La Content-Security-Policy se emite con nonce por request desde middleware.ts (§C-8.7, M-4),
+// lo que permite eliminar 'unsafe-inline' de script-src. El resto de cabeceras de seguridad
+// (estáticas, sin estado por request) se sirven aquí para todas las rutas, incluidos estáticos.
 const securityHeaders = [
-  { key: 'Content-Security-Policy', value: csp },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },

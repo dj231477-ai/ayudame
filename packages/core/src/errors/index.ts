@@ -10,6 +10,7 @@ export type ErrorCode =
   | 'photo_too_large'
   | 'unsupported_media'
   | 'ai_vision_exhausted'
+  | 'ai_text_exhausted'
   | 'rate_limited'
   | 'unauthorized'
   | 'forbidden_plan'
@@ -33,6 +34,7 @@ export const ERROR_CATALOG: Record<ErrorCode, ErrorMeta> = {
   photo_too_large: { httpStatus: 400, i18nKey: 'error.photo_too_large' },
   unsupported_media: { httpStatus: 400, i18nKey: 'error.unsupported_media' },
   ai_vision_exhausted: { httpStatus: 503, i18nKey: 'error.ai_vision_exhausted' },
+  ai_text_exhausted: { httpStatus: 503, i18nKey: 'error.ai_text_exhausted' },
   rate_limited: { httpStatus: 429, i18nKey: 'error.rate_limited' },
   unauthorized: { httpStatus: 401, i18nKey: 'error.unauthorized' },
   forbidden_plan: { httpStatus: 403, i18nKey: 'error.forbidden_plan' },
@@ -49,6 +51,7 @@ export const ERROR_MESSAGES: Record<Locale, Record<ErrorCode, string>> = {
     photo_too_large: 'La foto supera 5 MB.',
     unsupported_media: 'Formato de imagen no soportado.',
     ai_vision_exhausted: 'Verificación no disponible ahora; tu foto quedó guardada.',
+    ai_text_exhausted: 'Función de texto no disponible ahora, intenta en un momento.',
     rate_limited: 'Demasiadas solicitudes, intenta en un momento.',
     unauthorized: 'Necesitas iniciar sesión.',
     forbidden_plan: 'Esta función requiere un plan superior.',
@@ -62,6 +65,7 @@ export const ERROR_MESSAGES: Record<Locale, Record<ErrorCode, string>> = {
     photo_too_large: 'The photo exceeds 5 MB.',
     unsupported_media: 'Unsupported image format.',
     ai_vision_exhausted: 'Verification unavailable right now; your photo was saved.',
+    ai_text_exhausted: 'Text feature unavailable right now, try again shortly.',
     rate_limited: 'Too many requests, try again shortly.',
     unauthorized: 'You need to sign in.',
     forbidden_plan: 'This feature requires a higher plan.',

@@ -4,7 +4,10 @@
 // =============================================================================
 
 export type AIModality = 'vision' | 'text';
-export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama' | 'claude';
+// Ollama descartado (D-9, §C-25): latencia inaceptable. MiniMax M3 es el único fallback de
+// pago, tanto para visión (D-2, tras 50 usuarios) como para texto (D-9, sin ese umbral: sin
+// Ollama no queda alternativa gratuita cuando Groq+Cerebras agotan cuota el mismo día).
+export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'minimax';
 
 export interface AIProvider {
   provider: AIProviderName;

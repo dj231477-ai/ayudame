@@ -15,18 +15,19 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.APP_URL}}/internal/monetization/run",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [{ "name": "x-internal-secret", "value": "={{$env.INTERNAL_ADMIN_SECRET}}" }]
-        },
+        "url": "https://ayudame-flowday.vercel.app/internal/monetization/run",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "options": {}
       },
       "id": "call-monetization",
       "name": "POST /internal/monetization/run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 300]
+      "position": [520, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "FLOWDAYADMIN0001", "name": "FlowDay Internal Admin" }
+      }
     }
   ],
   "connections": {

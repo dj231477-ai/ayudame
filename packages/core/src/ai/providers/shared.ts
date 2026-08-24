@@ -25,7 +25,9 @@ interface OpenAIChatResponse {
   usage?: { total_tokens?: number };
 }
 
-/** Chat compatible con la API de OpenAI (Groq, Cerebras). */
+/** Chat compatible con la API de OpenAI (Groq, Cerebras, MiniMax). `imageUrl` activa contenido
+ * multimodal (visión) en proveedores que lo soporten — MiniMax M3 (D-2/D-9); Groq/Cerebras
+ * nunca lo reciben (solo texto, §C-10.3). */
 export async function openAICompatibleChat(opts: {
   provider: AIProviderName;
   baseUrl: string;
@@ -33,13 +35,21 @@ export async function openAICompatibleChat(opts: {
   model: string;
   prompt: string;
   maxTokens?: number;
+  imageUrl?: string;
 }): Promise<AIResponse> {
+  const content = opts.imageUrl
+    ? [
+        { type: 'text', text: opts.prompt },
+        { type: 'image_url', image_url: { url: opts.imageUrl } },
+      ]
+    : opts.prompt;
+
   const res = await fetch(`${opts.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${opts.apiKey}` },
     body: JSON.stringify({
       model: opts.model,
-      messages: [{ role: 'user', content: opts.prompt }],
+      messages: [{ role: 'user', content }],
       max_tokens: opts.maxTokens ?? 1024,
       temperature: 0.2,
     }),

@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-inbound",
-  "_comment": "SPEC §C-12.2 / §C-13.10: recibe mensajes de WhatsApp (Meta valida su propia firma X-Hub-Signature-256 dentro del nodo WhatsApp Trigger), reenvía el payload crudo a la app firmado con el mismo HMAC que el resto de eventos de n8n (INV-5). n8n no decide negocio (AR-3) — solo reenvía.",
+  "_comment": "SPEC §C-12.2 / §C-13.10: recibe mensajes de WhatsApp (Meta valida su propia firma X-Hub-Signature-256 dentro del nodo WhatsApp Trigger), reenvía el payload crudo a la app autenticado con la misma credencial nativa httpHeaderAuth que el resto de /internal/* (D-6, §C-25) — sin $env, sin HMAC en Code node. n8n no decide negocio (AR-3) — solo reenvía.",
   "nodes": [
     {
       "parameters": {
@@ -18,41 +18,27 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nconst body = JSON.stringify($input.item.json.body ?? $input.item.json);\nconst signature = crypto.createHmac('sha256', $env.N8N_WEBHOOK_SECRET).update(body, 'utf8').digest('hex');\nreturn { json: { body, signature } };"
-      },
-      "id": "sign-hmac",
-      "name": "Firmar HMAC",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [520, 300]
-    },
-    {
-      "parameters": {
         "method": "POST",
-        "url": "={{$env.APP_URL}}/api/v1/webhooks/whatsapp-inbound",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "x-flowday-signature", "value": "={{$json.signature}}" },
-            { "name": "content-type", "value": "application/json" }
-          ]
-        },
+        "url": "https://ayudame-flowday.vercel.app/internal/whatsapp-inbound",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
-        "specifyBody": "raw",
-        "rawContentType": "application/json",
-        "body": "={{$json.body}}",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body ?? $json) }}",
         "options": {}
       },
       "id": "forward-to-app",
-      "name": "POST /api/v1/webhooks/whatsapp-inbound",
+      "name": "POST /internal/whatsapp-inbound",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [780, 300]
+      "position": [520, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "FLOWDAYADMIN0001", "name": "FlowDay Internal Admin" }
+      }
     }
   ],
   "connections": {
-    "WhatsApp Trigger": { "main": [[{ "node": "Firmar HMAC", "type": "main", "index": 0 }]] },
-    "Firmar HMAC": { "main": [[{ "node": "POST /api/v1/webhooks/whatsapp-inbound", "type": "main", "index": 0 }]] }
+    "WhatsApp Trigger": { "main": [[{ "node": "POST /internal/whatsapp-inbound", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" }
 }

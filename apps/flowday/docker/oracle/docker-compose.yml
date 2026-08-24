@@ -1,12 +1,11 @@
-# Oracle Cloud Always Free (ARM A1) — orquestación FlowDay. SPEC §C-16.3.
+# Oracle Cloud Always Free (ARM A1) — orquestación FlowDay. SPEC §C-16.3, D-7.
 # INV-8: este Postgres es SOLO para n8n; la base de producto es Supabase.
 # E2: límites de CPU/memoria por contenedor. Esta VM usa 1 OCPU/6GB (mitad del
 # tier Always Free de A1, ahora 2 OCPU/12GB total en la cuenta, §C-16.2); el otro
-# 1 OCPU/6GB queda reservado para una segunda VM futura (candidata para Ollama).
-# Ollama NO corre en esta VM: no cabe junto a n8n+postgres en 1 OCPU/6GB. El
-# router de texto (§C-10.3) ya trata a Ollama como best-effort/no-crítico: sin
-# OLLAMA_BASE_URL, esa acción falla con reembolso (§C-9.6) en vez de degradar
-# silenciosamente. Vision NUNCA usa Ollama (INV-7), así que esto no la afecta.
+# 1 OCPU/6GB queda reservado para una segunda VM futura.
+# Sin Ollama: descartado por completo (D-9, latencia 8-12 tok/s inaceptable), no
+# solo por falta de espacio en esta VM. MiniMax M3 (de pago, gateado por flag) es
+# el único fallback cuando Groq/Cerebras/Gemini agotan cuota (§C-10.3).
 services:
   n8n:
     image: n8nio/n8n:latest
@@ -24,15 +23,10 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
-      # n8n bloquea por defecto el acceso a env vars desde expresiones de workflow;
-      # nuestros workflows leen {{$env.APP_URL}} (§C-12.2) a propósito, así que se
-      # habilita explícitamente. Ninguna de estas variables es secreto de producto.
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      # El workflow whatsapp-inbound firma HMAC dentro de un nodo Code (require('crypto')),
-      # bloqueado por defecto igual que el acceso a env vars.
-      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
-      - APP_URL=${APP_URL}
-      - INTERNAL_ADMIN_SECRET=${INTERNAL_ADMIN_SECRET}
+      # Bloquea {{$env.X}} en las expresiones de los nodos (hardening D-6). Los workflows
+      # (incluido whatsapp-inbound, §C-13.10) no dependen de $env: la URL de la app está
+      # hardcodeada y el secreto vive en credencial nativa de n8n (n8n/setup-credentials.sh).
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
       - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
     deploy:
       resources:

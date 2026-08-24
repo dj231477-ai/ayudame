@@ -1,13 +1,13 @@
 {
-  "name": "morning-briefing",
-  "_comment": "SPEC §C-12.2 / §C-12.5: cada 5 min; la app envía briefing a los usuarios cuya hora local sea ~05:00 (autoridad de '05:00' = app). Incluye tareas de Google Tasks si están conectadas.",
+  "name": "verify-queue",
+  "_comment": "SPEC §C-14.3: drena verification_queue. Cuando la visión (Gemini) estuvo agotada, las fotos se encolan; este cron reintenta su verificación cuando vuelve la cuota. n8n no contiene lógica de negocio (AR-3): solo dispara el job 'verify_queue' del scheduler de la app.",
   "nodes": [
     {
       "parameters": {
-        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] }
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 10 }] }
       },
-      "id": "cron-5min",
-      "name": "Every 5 minutes",
+      "id": "cron-10min",
+      "name": "Every 10 minutes",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
       "position": [260, 300]
@@ -20,7 +20,7 @@
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\"job\":\"briefing\"}",
+        "jsonBody": "{\"job\":\"verify_queue\"}",
         "options": {}
       },
       "id": "call-scheduler",
@@ -34,7 +34,7 @@
     }
   ],
   "connections": {
-    "Every 5 minutes": { "main": [[{ "node": "POST /internal/scheduler/run", "type": "main", "index": 0 }]] }
+    "Every 10 minutes": { "main": [[{ "node": "POST /internal/scheduler/run", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" }
 }

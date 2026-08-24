@@ -1,6 +1,8 @@
-# n8n local (entorno 'local', §C-19.1) — mientras la VM Oracle no tenga capacidad (§C-16).
-# Sin dominio ni TLS: solo localhost. Mismos workflows/envs que apps/flowday/docker/oracle/;
-# al migrar a la VM real, se reusan las mismas variables cambiando APP_URL/DOMAIN.
+# n8n local (entorno 'local', §C-19.1) — mientras la VM Oracle no tenga capacidad (§C-16,
+# D-7). Sin dominio ni TLS: solo localhost. Los workflows (D-6) tienen la URL de producción
+# hardcodeada (https://ayudame-flowday.vercel.app) y usan la credencial nativa httpHeaderAuth
+# (n8n/setup-credentials.sh) — para probarlos contra este stack local, edita la URL del nodo
+# HTTP Request en la UI de n8n a http://host.docker.internal:3000 antes de ejecutar.
 services:
   n8n:
     image: n8nio/n8n:latest
@@ -20,15 +22,10 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
-      # n8n bloquea por defecto el acceso a env vars desde expresiones de workflow;
-      # nuestros workflows leen {{$env.APP_URL}} (§C-12.2) a propósito, así que se
-      # habilita explícitamente. Ninguna de estas variables es secreto de producto.
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-      # El workflow whatsapp-inbound firma HMAC dentro de un nodo Code (require('crypto')),
-      # bloqueado por defecto igual que el acceso a env vars.
-      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
-      - APP_URL=${APP_URL}
-      - INTERNAL_ADMIN_SECRET=${INTERNAL_ADMIN_SECRET}
+      # Bloquea {{$env.X}} en las expresiones de los nodos (hardening D-6, igual que Oracle).
+      # Los workflows no dependen de $env: la URL de la app está hardcodeada y el secreto de
+      # /internal/* vive en la credencial nativa httpHeaderAuth (n8n/setup-credentials.sh).
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
       - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
     volumes: ['n8n_local_data:/home/node/.n8n']
     depends_on: [postgres]

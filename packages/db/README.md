@@ -14,10 +14,10 @@
 
 ## Orden de aplicación [NORMATIVO — §C-19.2]
 
-1. Compartidas: `migrations/000` … `migrations/010`
+1. Compartidas: `migrations/000` … `migrations/012`
 2. Vistas: `views/public_profiles.sql`
 3. Storage: `storage/buckets.sql`
-4. App FlowDay: `apps/flowday/db/migrations/100` … `105`
+4. App FlowDay: `apps/flowday/db/migrations/100` … `107`
 
 > Migraciones **primero**, luego el deploy de la app (§C-19.2). Estrategia expand→migrate→contract (§C-19.3).
 
@@ -36,6 +36,8 @@
 | `008_subscriptions.sql` | `subscriptions` | autoridad = Stripe |
 | `009_processed_events.sql` | `processed_events` | idempotencia webhooks |
 | `010_rpc_functions.sql` | RPCs + trigger alta | `search_path` fijado + grants service_role |
+| `011_idempotent_credit_purchase.sql` | `record_credit_purchase()` | acredita compras de Stripe atómica e idempotentemente por `stripe_payment_id` (corrige doble crédito en reintentos, INV-6) |
+| `012_refund_credits_optional_log.sql` | `refund_credits()` | `p_usage_log_id` pasa a opcional (DEFAULT NULL): permite reembolsar antes de que exista fila `usage_log` |
 | `views/public_profiles.sql` | `public_profiles` | solo handle/full_name/streak |
 | `storage/buckets.sql` | bucket `evidence-photos` | privado, 5 MB, JPEG/PNG/WebP |
 | `100_blocks.sql` | `blocks` | máquina de estados §C-13.2 |
@@ -44,6 +46,8 @@
 | `103_challenges.sql` | `challenges`, `challenge_members` | RLS sin recursión (helpers definer) |
 | `104_verification_queue.sql` | `verification_queue` | cola de reproceso cuando `ai_vision_exhausted` (§C-14.3 D-2); RLS: usuario solo lee su fila |
 | `105_google_tokens.sql` | `google_tokens` | interna; refresh/access token cifrados (AES-256-GCM, `TOKEN_ENCRYPTION_KEY`) |
+| `106_reorg_cache.sql` | `reorg_cache` | cache de reorganización Calendar/Tasks (§C-26.3); backfill — vivo en prod desde 2026-06-22, archivo faltaba en el repo |
+| `107_whatsapp_links.sql` | `whatsapp_links` | canal WhatsApp opt-in (D-8, §C-13.10); vínculo teléfono↔usuario por código de 6 dígitos |
 
 ## Aplicar
 

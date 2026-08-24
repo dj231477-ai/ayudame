@@ -1,5 +1,7 @@
 -- =============================================================================
--- Migration 106_whatsapp_links  [NORMATIVO — SPEC §C-7.2, §C-13.10]
+-- Migration 107_whatsapp_links  [NORMATIVO — SPEC §C-7.2, §C-13.10]
+-- Numerada 107, no 106: 106 ya lo ocupaba reorg_cache (§C-26.3), aplicado directo a
+-- producción el 2026-06-22 sin archivo en el repo hasta el backfill de 106_reorg_cache.sql.
 -- Vínculo teléfono de WhatsApp -> usuario. El usuario genera un código de 6
 -- dígitos desde Ajustes y lo envía por WhatsApp para confirmar el vínculo
 -- (evita que cualquiera reclame un número ajeno). INSERT/UPDATE solo vía
