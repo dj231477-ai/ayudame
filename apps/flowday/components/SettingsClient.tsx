@@ -13,7 +13,12 @@ const LABEL: Record<string, string> = {
   error: 'Error, reintenta',
 };
 
-export function SettingsClient() {
+interface SettingsClientProps {
+  googleConnected: boolean;
+  whatsappPhone: string | null;
+}
+
+export function SettingsClient({ googleConnected, whatsappPhone }: SettingsClientProps) {
   const { status, subscribe } = usePush();
   const [waCode, setWaCode] = useState<string | null>(null);
   const [waBusy, setWaBusy] = useState(false);
@@ -51,12 +56,16 @@ export function SettingsClient() {
         <p className="mb-2 text-sm text-neutral-600">
           Conecta para ver tus tareas y recibirlas en el briefing matutino.
         </p>
-        <a
-          href="/api/v1/google/connect"
-          className="inline-flex min-h-11 items-center justify-center rounded-xl bg-neutral-200 px-4 py-2 text-base font-medium text-neutral-900 hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-100"
-        >
-          Conectar Google Tasks
-        </a>
+        {googleConnected ? (
+          <p className="text-sm font-medium text-deep">Conectado ✓</p>
+        ) : (
+          <a
+            href="/api/v1/google/connect"
+            className="inline-flex min-h-11 items-center justify-center rounded-xl bg-neutral-200 px-4 py-2 text-base font-medium text-neutral-900 hover:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-100"
+          >
+            Conectar Google Tasks
+          </a>
+        )}
       </div>
 
       <div className="pt-4">
@@ -68,6 +77,8 @@ export function SettingsClient() {
           <p className="text-sm">
             Envía <strong>LINK {waCode}</strong> por WhatsApp a {whatsappNumber || 'nuestro número'} para confirmar.
           </p>
+        ) : whatsappPhone ? (
+          <p className="text-sm font-medium text-deep">Conectado ✓ ({whatsappPhone})</p>
         ) : (
           <Button variant="secondary" onClick={() => void connectWhatsApp()} disabled={waBusy}>
             {waBusy ? 'Generando código…' : 'Conectar WhatsApp'}

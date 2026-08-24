@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { isGoogleConnected } from '@/lib/google/tokens';
 import { SettingsClient } from '@/components/SettingsClient';
 import { AccountClient } from '@/components/AccountClient';
 
@@ -12,6 +13,11 @@ export default async function SettingsPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect('/');
 
+  const [googleConnected, { data: waLink }] = await Promise.all([
+    isGoogleConnected(user.id),
+    supabase.from('whatsapp_links').select('phone_e164').eq('user_id', user.id).maybeSingle(),
+  ]);
+
   return (
     <main className="mx-auto max-w-md space-y-6 px-4 py-8">
       <header className="flex items-center justify-between">
@@ -21,7 +27,7 @@ export default async function SettingsPage() {
         </a>
       </header>
 
-      <SettingsClient />
+      <SettingsClient googleConnected={googleConnected} whatsappPhone={waLink?.phone_e164 ?? null} />
 
       <AccountClient />
 
