@@ -6,6 +6,8 @@ import { sendWhatsAppText, fetchWhatsAppMedia } from '@flowday/core/notification
 import { createServiceClient } from '@/lib/supabase/service';
 import { canTransition } from '@/lib/blocks/state-machine';
 import { verifyPhoto } from '@/lib/verify-photo';
+import { getOrComputeDailyPlan } from '@/lib/planning/daily-plan';
+import { localDate } from '@/lib/datetime';
 
 // =============================================================================
 // Webhook WhatsApp inbound  [NORMATIVO — SPEC §C-13.10]
@@ -38,6 +40,7 @@ const InboundBody = z.object({
 });
 
 const LINK_COMMAND = /^link\s+(\d{6})$/i;
+const START_DAY_COMMAND = /^(comenzar|empezar|iniciar|start|dale)$/i; // D-10, §C-13.10
 
 function toE164(waId: string): string {
   return waId.startsWith('+') ? waId : `+${waId}`;
@@ -142,11 +145,13 @@ async function handlePhoto(
   phone: string,
   mediaId: string,
 ): Promise<void> {
+  // D-10: la foto puede ser de inicio (awaiting_start_photo) o de fin (awaiting_photo) — se
+  // busca entre ambos estados y se verifica con la fase que corresponda al que se encuentre.
   const { data: blocks } = await svc
     .from('blocks')
-    .select('id, type, label')
+    .select('id, type, label, status')
     .eq('user_id', userId)
-    .eq('status', 'awaiting_photo');
+    .in('status', ['awaiting_start_photo', 'awaiting_photo']);
 
   const candidates = blocks ?? [];
   if (candidates.length === 0) {
@@ -159,6 +164,7 @@ async function handlePhoto(
     return;
   }
   const block = candidates[0]!;
+  const phase = block.status === 'awaiting_start_photo' ? 'start' : 'end';
 
   const media = await fetchWhatsAppMedia(mediaId);
   if (!media) {
@@ -184,13 +190,50 @@ async function handlePhoto(
       photoPath,
       blockType: block.type,
       taskName: block.label,
+      phase,
     });
-    await sendWhatsAppText(
-      phone,
-      result.verified ? `✓ ¡Verificado! ${result.message}` : `No se pudo verificar: ${result.message}`,
-    );
+    if (!result.verified) {
+      await sendWhatsAppText(phone, `No se pudo verificar: ${result.message}`);
+      return;
+    }
+    if (phase === 'start') {
+      await sendWhatsAppText(phone, `✓ Arrancado. Nos vemos con la foto de que terminaste.`);
+      return;
+    }
+    // Fase de fin verificada: encadena el siguiente bloque pendiente del día (§C-13.10, D-10).
+    await sendWhatsAppText(phone, `✓ ${block.label} verificado. ${result.message}`);
+    await announceNextBlock(svc, userId, phone);
   } catch {
     await sendWhatsAppText(phone, 'Hubo un error verificando tu foto. Tu bloque sigue esperando — intenta de nuevo.');
+  }
+}
+
+/** D-10: tras cada foto de fin verificada, anuncia el siguiente bloque `pending` del día o cierra. */
+async function announceNextBlock(
+  svc: ReturnType<typeof createServiceClient>,
+  userId: string,
+  phone: string,
+): Promise<void> {
+  const { data: profile } = await svc.from('profiles').select('timezone').eq('id', userId).single();
+  const today = localDate(new Date(), profile?.timezone ?? 'America/Bogota');
+
+  const { data: next } = await svc
+    .from('blocks')
+    .select('label, start_time, end_time')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .eq('status', 'pending')
+    .order('start_time', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (next) {
+    await sendWhatsAppText(
+      phone,
+      `Siguiente: ${next.label} (${next.start_time}–${next.end_time}). Mándame la foto cuando arranques.`,
+    );
+  } else {
+    await sendWhatsAppText(phone, 'Eso es todo por hoy. Buen trabajo — escribe "comenzar" mañana para seguir.');
   }
 }
 
@@ -201,6 +244,11 @@ async function handleCommand(
   text: string,
 ): Promise<void> {
   const cmd = text.trim().toLowerCase();
+
+  if (START_DAY_COMMAND.test(cmd)) {
+    await handleStartDay(svc, userId, phone);
+    return;
+  }
 
   if (cmd === 'saldo') {
     const { data } = await svc.from('credits').select('balance').eq('user_id', userId).single();
@@ -219,7 +267,7 @@ async function handleCommand(
       .from('blocks')
       .select('id, label, status')
       .eq('user_id', userId)
-      .in('status', ['active', 'awaiting_photo']);
+      .in('status', ['awaiting_start_photo', 'active', 'awaiting_photo']);
     const candidates = blocks ?? [];
     if (candidates.length !== 1) {
       await sendWhatsAppText(phone, 'No encontré un único bloque activo para saltar. Hazlo desde la app.');
@@ -235,5 +283,53 @@ async function handleCommand(
     return;
   }
 
-  await sendWhatsAppText(phone, 'Comandos: "saldo", "racha", "saltar" — o manda tu foto de evidencia directo.');
+  await sendWhatsAppText(phone, 'Comandos: "saldo", "racha", "saltar", "comenzar" — o manda tu foto de evidencia directo.');
+}
+
+/**
+ * D-10, §C-13.10: palabra clave de arranque diario. El usuario, no la app, inicia la
+ * conversación — así toda respuesta cae dentro de la ventana de 24h que él mismo abrió y
+ * nunca hace falta una plantilla aprobada por Meta.
+ */
+async function handleStartDay(
+  svc: ReturnType<typeof createServiceClient>,
+  userId: string,
+  phone: string,
+): Promise<void> {
+  const { data: profile } = await svc.from('profiles').select('timezone').eq('id', userId).single();
+  const tz = profile?.timezone ?? 'America/Bogota';
+  const today = localDate(new Date(), tz);
+
+  let plan: Awaited<ReturnType<typeof getOrComputeDailyPlan>>;
+  try {
+    plan = await getOrComputeDailyPlan(userId, today);
+  } catch {
+    await sendWhatsAppText(phone, 'No pude armar tu día ahora mismo. Intenta de nuevo en un momento.');
+    return;
+  }
+
+  if (plan.length === 0) {
+    await sendWhatsAppText(phone, 'No encontré tareas ni eventos para hoy. Crea un bloque desde la app cuando quieras.');
+    return;
+  }
+
+  const { data: first } = await svc
+    .from('blocks')
+    .select('label, start_time, end_time')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .in('status', ['pending', 'awaiting_start_photo', 'active'])
+    .order('start_time', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!first) {
+    await sendWhatsAppText(phone, '¡Ya completaste todo lo de hoy! Buen trabajo.');
+    return;
+  }
+
+  await sendWhatsAppText(
+    phone,
+    `Buenos días! Hoy empezamos con ${first.label} (${first.start_time}–${first.end_time}). Mándame una foto cuando arranques.`,
+  );
 }

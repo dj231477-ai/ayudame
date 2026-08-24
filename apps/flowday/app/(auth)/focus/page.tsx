@@ -5,7 +5,7 @@ import { localDate } from '@/lib/datetime';
 import { DayBoard } from '@/components/blocks/DayBoard';
 import type { Block } from '@/lib/types';
 
-// Modo foco: solo los bloques que requieren tu atención ahora (active / awaiting_photo). §C-13.3.
+// Modo foco: bloques que requieren tu atención ahora (awaiting_start_photo / active / awaiting_photo, D-10). §C-13.3.
 export const dynamic = 'force-dynamic';
 
 export default async function FocusPage() {
@@ -28,7 +28,7 @@ export default async function FocusPage() {
     .select('id,date,start_time,end_time,label,type,task_id,status')
     .eq('user_id', user.id)
     .eq('date', today)
-    .in('status', ['active', 'awaiting_photo'])
+    .in('status', ['awaiting_start_photo', 'active', 'awaiting_photo'])
     .order('start_time', { ascending: true });
 
   const focus = (blocks ?? []) as Block[];

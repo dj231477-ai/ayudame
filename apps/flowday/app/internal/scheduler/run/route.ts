@@ -8,6 +8,7 @@ import { canTransition } from '@/lib/blocks/state-machine';
 import { pushToUser } from '@/lib/push/send';
 import { listTasks } from '@/lib/google/tasks';
 import { verifyPhoto } from '@/lib/verify-photo';
+import { getOrComputeDailyPlan } from '@/lib/planning/daily-plan';
 import { localDate, localMinutes, timeToMinutes, addDays } from '@/lib/datetime';
 
 // =============================================================================
@@ -70,7 +71,7 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
   const { data: blocks } = await svc
     .from('blocks')
     .select('id, user_id, start_time, end_time, label, status, date')
-    .in('status', ['pending', 'active'])
+    .in('status', ['pending', 'awaiting_start_photo', 'active'])
     .in('date', dates);
 
   const list = blocks ?? [];
@@ -87,9 +88,15 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
     const warnMin = endMin - WARNING_BEFORE_END;
     const within = (t: number) => nowMin >= t && nowMin < t + TICK_WINDOW;
 
-    if (b.status === 'pending' && within(startMin) && canTransition('pending', 'active')) {
-      await svc.from('blocks').update({ status: 'active' }).eq('id', b.id);
-      await pushToUser(b.user_id, { title: 'Bloque iniciado', body: b.label, url: '/focus' });
+    if (b.status === 'pending' && within(startMin) && canTransition('pending', 'awaiting_start_photo')) {
+      await svc.from('blocks').update({ status: 'awaiting_start_photo' }).eq('id', b.id);
+      await pushToUser(b.user_id, { title: 'Empieza tu bloque', body: `Manda tu foto de inicio: ${b.label}`, url: '/focus' });
+      actions++;
+    } else if (b.status === 'awaiting_start_photo' && nowMin >= endMin && canTransition('awaiting_start_photo', 'skipped')) {
+      // D-10, §C-13.5: a diferencia de awaiting_photo (nunca se auto-marca, INV-11), aquí no
+      // hubo trabajo que preservar — se venció la ventana entera del bloque sin foto de inicio.
+      await svc.from('blocks').update({ status: 'skipped' }).eq('id', b.id);
+      await pushToUser(b.user_id, { title: 'Bloque saltado', body: `No llegó la foto de inicio a tiempo: ${b.label}`, url: '/focus' });
       actions++;
     } else if (b.status === 'active' && within(warnMin)) {
       await pushToUser(b.user_id, { title: 'Faltan ~10 min', body: `Prepara tu foto: ${b.label}`, url: '/focus' });
@@ -108,13 +115,14 @@ async function runReminders(svc: FlowDayClient): Promise<number> {
   const { data: blocks } = await svc
     .from('blocks')
     .select('id, user_id, label, updated_at, status')
-    .eq('status', 'awaiting_photo');
+    .in('status', ['awaiting_photo', 'awaiting_start_photo']);
   let actions = 0;
   for (const b of blocks ?? []) {
     const ageMin = (now - new Date(b.updated_at).getTime()) / 60000;
     // ≈3 recordatorios entre los 15 y 30 min (§C-13.5), cron cada 5 min.
     if (ageMin >= 15 && ageMin <= 32) {
-      await pushToUser(b.user_id, { title: 'Foto pendiente', body: b.label, url: '/focus' });
+      const title = b.status === 'awaiting_start_photo' ? 'Foto de inicio pendiente' : 'Foto pendiente';
+      await pushToUser(b.user_id, { title, body: b.label, url: '/focus' });
       actions++;
     }
   }
@@ -130,8 +138,17 @@ async function runBriefing(svc: FlowDayClient): Promise<number> {
     if (nowMin < BRIEFING_MIN || nowMin >= BRIEFING_MIN + TICK_WINDOW) continue; // ≈05:00 local
 
     const today = localDate(now, p.timezone);
-    const { data: blocks } = await svc.from('blocks').select('id').eq('user_id', p.id).eq('date', today);
-    let body = `Tienes ${blocks?.length ?? 0} bloque(s) hoy.`;
+    // §C-26.4/D-10: dispara la auto-organización del día (cacheada por hash, §C-26.3) — si el
+    // usuario ya la disparó antes por WhatsApp ("comenzar"), esto es gratis (mismo hash).
+    let blockCount = 0;
+    try {
+      const plan = await getOrComputeDailyPlan(p.id, today);
+      blockCount = plan.length;
+    } catch {
+      const { data: blocks } = await svc.from('blocks').select('id').eq('user_id', p.id).eq('date', today);
+      blockCount = blocks?.length ?? 0;
+    }
+    let body = `Tienes ${blockCount} bloque(s) hoy.`;
     try {
       const tasks = await listTasks(p.id);
       if (tasks.length > 0) body += ` ${tasks.length} tarea(s) en Google Tasks.`;
@@ -157,6 +174,7 @@ async function runDailyReset(svc: FlowDayClient): Promise<number> {
       .select('created_at')
       .eq('user_id', p.id)
       .eq('verified', true)
+      .eq('phase', 'end') // D-10: la foto de inicio no cuenta como "trabajo terminado" para el streak.
       .gte('created_at', addDays(now, -2).toISOString())
       .lte('created_at', now.toISOString());
 
@@ -178,7 +196,7 @@ async function runDailyReset(svc: FlowDayClient): Promise<number> {
 async function runVerifyQueue(svc: FlowDayClient): Promise<number> {
   const { data: rows } = await svc
     .from('verification_queue')
-    .select('id, user_id, block_id, photo_path, attempts')
+    .select('id, user_id, block_id, photo_path, attempts, phase')
     .eq('status', 'pending')
     .order('created_at', { ascending: true })
     .limit(QUEUE_BATCH);
@@ -191,7 +209,11 @@ async function runVerifyQueue(svc: FlowDayClient): Promise<number> {
       .eq('id', row.block_id)
       .maybeSingle();
 
-    if (!block || block.status !== 'awaiting_photo') {
+    // D-10: la fase determina qué estado del bloque es válido para reprocesar.
+    const phase = row.phase === 'start' ? 'start' : 'end';
+    const requiredStatus = phase === 'start' ? 'awaiting_start_photo' : 'awaiting_photo';
+
+    if (!block || block.status !== requiredStatus) {
       await svc
         .from('verification_queue')
         .update({ status: 'done', updated_at: new Date().toISOString() })
@@ -206,6 +228,7 @@ async function runVerifyQueue(svc: FlowDayClient): Promise<number> {
         photoPath: row.photo_path,
         blockType: block.type,
         taskName: block.label,
+        phase,
         fromQueue: true,
       });
       await svc

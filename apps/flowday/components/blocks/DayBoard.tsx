@@ -79,6 +79,10 @@ export function DayBoard({
     setBlocks((b) => b.map((x) => (x.id === id ? { ...x, status: 'verified' } : x)));
   }
 
+  function markStarted(id: string) {
+    setBlocks((b) => b.map((x) => (x.id === id ? { ...x, status: 'active' } : x)));
+  }
+
   return (
     <div className="space-y-4">
       {error ? <ErrorCard message={error} onRetry={reload} /> : null}
@@ -114,6 +118,7 @@ export function DayBoard({
                 userId={userId}
                 block={b}
                 onTransition={transition}
+                onStarted={markStarted}
                 onVerified={markVerified}
                 onError={setError}
               />
@@ -129,19 +134,23 @@ function BlockRow({
   userId,
   block,
   onTransition,
+  onStarted,
   onVerified,
   onError,
 }: {
   userId: string;
   block: Block;
   onTransition: (id: string, status: Block['status']) => void;
+  onStarted: (id: string) => void;
   onVerified: (id: string) => void;
   onError: (msg: string | null) => void;
 }) {
   const remaining = useBlockTimer(block.date, block.status === 'active' ? block.end_time : null);
   const [busy, setBusy] = useState(false);
 
-  async function uploadAndVerify(file: File) {
+  // §C-13.2/§C-13.3 (D-10): 'start' confirma que arrancó (awaiting_start_photo→active),
+  // 'end' confirma que terminó (awaiting_photo→verified). Mismo endpoint, distinta fase.
+  async function uploadAndVerify(file: File, phase: 'start' | 'end') {
     onError(null);
     setBusy(true);
     try {
@@ -156,10 +165,12 @@ function BlockRow({
       }
       const res = await apiFetch<{ verified: boolean; message: string }>('/api/v1/verify-photo', {
         method: 'POST',
-        body: JSON.stringify({ block_id: block.id, photo_path: path }),
+        body: JSON.stringify({ block_id: block.id, photo_path: path, phase }),
       });
-      if (res.verified) onVerified(block.id);
-      else onError(res.message || 'La foto no fue verificada. Intenta con otra.');
+      if (res.verified) {
+        if (phase === 'start') onStarted(block.id);
+        else onVerified(block.id);
+      } else onError(res.message || 'La foto no fue verificada. Intenta con otra.');
     } catch (e) {
       if (e instanceof ApiError) onError(e.message);
     } finally {
@@ -187,7 +198,16 @@ function BlockRow({
 
       <div className="mt-3 flex flex-wrap gap-2">
         {block.status === 'pending' ? (
-          <Button onClick={() => onTransition(block.id, 'active')}>Iniciar</Button>
+          <Button onClick={() => onTransition(block.id, 'awaiting_start_photo')}>Iniciar</Button>
+        ) : null}
+        {block.status === 'awaiting_start_photo' ? (
+          <div className="w-full space-y-2">
+            <p className="text-xs text-neutral-600">Mándame una foto de que arrancaste.</p>
+            <PhotoCapture onCapture={(file) => uploadAndVerify(file, 'start')} busy={busy} />
+            <Button variant="ghost" onClick={() => onTransition(block.id, 'skipped')}>
+              Saltar
+            </Button>
+          </div>
         ) : null}
         {block.status === 'active' ? (
           <>
@@ -199,7 +219,7 @@ function BlockRow({
         ) : null}
         {block.status === 'awaiting_photo' ? (
           <div className="w-full space-y-2">
-            <PhotoCapture onCapture={uploadAndVerify} busy={busy} />
+            <PhotoCapture onCapture={(file) => uploadAndVerify(file, 'end')} busy={busy} />
             <Button variant="ghost" onClick={() => onTransition(block.id, 'skipped')}>
               Saltar
             </Button>

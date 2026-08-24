@@ -2,9 +2,9 @@ import 'server-only';
 import { getValidAccessToken } from './tokens';
 
 // Google Calendar (lectura) — Pro+. SPEC §C-1.2 #8 (ajuste de bloques a reuniones).
-// Solo lectura de eventos próximos. La auto-organización (eventos con hora -> bloques sin IA,
-// tareas sin hora -> encaje con IA, cache por hash, 1x/día vía morning-briefing, debounce 30s)
-// está especificada en §C-26 y pendiente de implementación.
+// Solo lectura de eventos. La auto-organización (eventos con hora -> bloques sin IA, tareas sin
+// hora -> encaje con IA, cache por hash, 1x/día vía morning-briefing o bajo demanda por WhatsApp,
+// debounce 30s diferido) está en §C-26/§C-13.10 (D-10), implementada en lib/planning/daily-plan.ts.
 const CAL_API = 'https://www.googleapis.com/calendar/v3';
 
 export interface CalEvent {
@@ -21,11 +21,14 @@ interface RawEvent {
   end?: { dateTime?: string; date?: string };
 }
 
-export async function listUpcomingEvents(userId: string): Promise<CalEvent[]> {
+export async function listUpcomingEvents(
+  userId: string,
+  range?: { timeMin: Date; timeMax: Date },
+): Promise<CalEvent[]> {
   const token = await getValidAccessToken(userId);
   if (!token) return [];
-  const timeMin = new Date().toISOString();
-  const timeMax = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+  const timeMin = (range?.timeMin ?? new Date()).toISOString();
+  const timeMax = (range?.timeMax ?? new Date(Date.now() + 24 * 3600 * 1000)).toISOString();
   const url =
     `${CAL_API}/calendars/primary/events?singleEvents=true&orderBy=startTime` +
     `&timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=50`;

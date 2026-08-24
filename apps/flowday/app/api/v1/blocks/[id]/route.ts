@@ -9,7 +9,9 @@ export const dynamic = 'force-dynamic';
 const BLOCK_SELECT = 'id,date,start_time,end_time,label,type,task_id,status';
 
 const PatchBody = z.object({
-  status: z.enum(['pending', 'active', 'awaiting_photo', 'verified', 'skipped']).optional(),
+  status: z
+    .enum(['pending', 'awaiting_start_photo', 'active', 'awaiting_photo', 'verified', 'skipped'])
+    .optional(),
   label: z.string().min(1).max(200).optional(),
   start_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional(),
   end_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional(),

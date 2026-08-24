@@ -238,6 +238,7 @@ export type Database = {
           confidence: number | null
           created_at: string
           id: string
+          phase: string
           photo_path: string
           provider: string | null
           usage_log_id: string | null
@@ -250,6 +251,7 @@ export type Database = {
           confidence?: number | null
           created_at?: string
           id?: string
+          phase?: string
           photo_path: string
           provider?: string | null
           usage_log_id?: string | null
@@ -262,6 +264,7 @@ export type Database = {
           confidence?: number | null
           created_at?: string
           id?: string
+          phase?: string
           photo_path?: string
           provider?: string | null
           usage_log_id?: string | null
@@ -494,6 +497,38 @@ export type Database = {
           },
         ]
       }
+      reorg_cache: {
+        Row: {
+          computed_at: string
+          date: string
+          plan: Json
+          source_hash: string
+          user_id: string
+        }
+        Insert: {
+          computed_at?: string
+          date: string
+          plan: Json
+          source_hash: string
+          user_id: string
+        }
+        Update: {
+          computed_at?: string
+          date?: string
+          plan?: Json
+          source_hash?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reorg_cache_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscriptions: {
         Row: {
           created_at: string
@@ -595,6 +630,7 @@ export type Database = {
           created_at: string
           id: string
           last_error: string | null
+          phase: string
           photo_path: string
           status: string
           updated_at: string
@@ -606,6 +642,7 @@ export type Database = {
           created_at?: string
           id?: string
           last_error?: string | null
+          phase?: string
           photo_path: string
           status?: string
           updated_at?: string
@@ -617,6 +654,7 @@ export type Database = {
           created_at?: string
           id?: string
           last_error?: string | null
+          phase?: string
           photo_path?: string
           status?: string
           updated_at?: string
@@ -863,7 +901,14 @@ export const Constants = {
 export type Plan = 'free' | 'pro' | 'team';
 export type SubscriptionStatus = 'active' | 'past_due' | 'canceled' | 'trialing';
 export type BlockType = 'deep' | 'admin' | 'body' | 'rest' | 'review';
-export type BlockStatus = 'pending' | 'active' | 'awaiting_photo' | 'verified' | 'skipped';
+export type BlockStatus =
+  | 'pending'
+  | 'awaiting_start_photo'
+  | 'active'
+  | 'awaiting_photo'
+  | 'verified'
+  | 'skipped';
+export type EvidencePhase = 'start' | 'end';
 export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'minimax';
 export type UsageAction =
   | 'photo_verify'

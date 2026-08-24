@@ -4,11 +4,13 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1 · **Fecha:** Junio 2026 · **Estado:** en producción.
+> **Versión:** 2.1.2 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
-> **Cambios en 2.1.1 (agosto 2026).** (1) **D-7:** el Contabo VPS (D-5) quedó suspendido por impago; orquestación migrando de vuelta a Oracle Always Free, ahora en tier reducido (1 OCPU/6GB, sin Ollama en esta VM) — §C-16.2. (2) **D-8:** WhatsApp Business Cloud API oficial como **canal adicional opt-in** (AR-6, §C-13.10) — vínculo de teléfono, foto de evidencia y comandos cortos por WhatsApp, reusando `verifyPhoto()` sin lógica duplicada; workflow `whatsapp-inbound` autenticado igual que el resto de `/internal/*` (D-6), no HMAC. (3) Se restaura §C-13.9 "Guía de privacidad en la foto de evidencia" (el código de `PhotoCapture` nunca cambió; 2.1 omitió documentarlo). (4) Nueva §C-18.6: herramientas de testing opt-in (smoke test de n8n, Postman/Newman, Playwright E2E, Lighthouse) y los bugs reales que encontraron. (5) Modelo Gemini actualizado a `gemini-3.6-flash` (`gemini-2.5-flash` quedó deprecado).
+> **Cambios en 2.1.1 (agosto 2026).** (1) **D-7:** el Contabo VPS (D-5) quedó suspendido por impago; orquestación migrando de vuelta a Oracle Always Free, ahora en tier reducido (1 OCPU/6GB, sin Ollama en esta VM) — §C-16.2. (2) **D-8:** WhatsApp Business Cloud API oficial como **canal adicional opt-in** (AR-6, §C-13.10) — vínculo de teléfono, foto de evidencia y comandos cortos por WhatsApp, reusando `verifyPhoto()` sin lógica duplicada; workflow `whatsapp-inbound` autenticado igual que el resto de `/internal/*` (D-6), no HMAC. (3) Se restaura §C-13.9 "Guía de privacidad en la foto de evidencia" (el código de `PhotoCapture` nunca cambió; 2.1 omitió documentarlo). (4) Nueva §C-18.6: herramientas de testing opt-in (smoke test de n8n, Postman/Newman, Playwright E2E, Lighthouse) y los bugs reales que encontraron. (5) Modelo Gemini actualizado a `gemini-3.6-flash` (`gemini-2.5-flash` quedó deprecado). (6) **D-9:** Ollama se elimina por completo (latencia inaceptable); MiniMax M3 cubre también el respaldo de texto bajo el mismo flag `vision_paid_fallback_active` (§C-10.3).
+>
+> **Cambios en 2.1.2 (agosto 2026).** Guía diaria por WhatsApp, sin plantilla de Meta y sin coste por mensaje (**D-10**, §C-25): el usuario escribe una palabra clave ("comenzar"/"empezar"/"iniciar") cada mañana, lo que abre la ventana de respuesta libre de 24 h y evita todo mensaje proactivo. (1) Se implementa la auto-organización de Calendar/Tasks (§C-26), hasta ahora solo especificada: `getOrComputeDailyPlan` (`apps/flowday/lib/planning/daily-plan.ts`), reusando `reorg_cache` (migración `106_reorg_cache.sql`). (2) Nuevo modelo de **doble foto por bloque** (inicio + fin, §C-13.2/§C-13.3): nuevo estado `awaiting_start_photo` y columna `evidence.phase` (migración `108_evidence_phase.sql`). (3) §C-13.10 se extiende con el flujo conversacional secuencial (palabra clave → primer bloque → foto de inicio → foto de fin → siguiente bloque → cierre del día).
 
 ---
 
@@ -414,6 +416,7 @@ flowday-platform/
     │   ├── components/               # blocks/, focus/, habits/ (específicos)
     │   ├── lib/
     │   │   ├── verify-photo.ts       # VERIFY_PROMPT + orquestación con @flowday/core/ai
+    │   │   ├── planning/daily-plan.ts # getOrComputeDailyPlan — auto-organización (§C-26, D-10)
     │   │   └── google/{tasks,calendar}.ts
     │   ├── hooks/                    # useBlockTimer, usePush, useGoogleTasks, useStreak
     │   ├── db/migrations/            # 100+ (blocks, evidence, habits, challenges)
@@ -424,7 +427,8 @@ flowday-platform/
     │   │   ├── 104_verification_queue.sql # cola de reverificación cuando Gemini agota cuota (§C-14.3)
     │   │   ├── 105_google_tokens.sql       # refresh tokens de Google cifrados (AES-256-GCM, D-4)
     │   │   ├── 106_reorg_cache.sql         # cache de reorganización Calendar/Tasks (§C-26.3)
-    │   │   └── 107_whatsapp_links.sql      # vínculo teléfono WhatsApp -> usuario (§C-13.10, D-8)
+    │   │   ├── 107_whatsapp_links.sql      # vínculo teléfono WhatsApp -> usuario (§C-13.10, D-8)
+    │   │   └── 108_evidence_phase.sql      # evidence.phase 'start'|'end' (§C-13.2/§C-13.3, D-10)
     │   ├── n8n/workflows/            # exports JSON (ver §C-12)
     │   ├── public/                   # manifest.json, sw.js, icons/, screenshots/
     │   └── docker/oracle/            # docker-compose.yml + nginx.conf (ver §C-16)
@@ -636,7 +640,8 @@ create table blocks (
   label       text not null,
   type        text not null,    -- 'deep' | 'admin' | 'body' | 'rest' | 'review'
   task_id     text,             -- ID de Google Tasks (opcional)
-  status      text not null default 'pending', -- 'pending'|'active'|'awaiting_photo'|'verified'|'skipped'
+  status      text not null default 'pending',
+  -- 'pending'|'awaiting_start_photo'|'active'|'awaiting_photo'|'verified'|'skipped' (§C-13.2, D-10)
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
@@ -656,6 +661,14 @@ create table evidence (
   created_at       timestamptz not null default now()
 );
 create index evidence_block_idx on evidence(block_id);
+
+-- 108_evidence_phase.sql  (§C-13.2/§C-13.3, D-10: doble foto por bloque)
+alter table evidence add column phase text not null default 'end'
+  check (phase in ('start','end'));
+-- verification_queue (§C-14.3) también necesita `phase`: si una foto de inicio se encola por
+-- ai_vision_exhausted, el drenado debe reprocesarla como 'start', no asumir 'end' por defecto.
+alter table verification_queue add column phase text not null default 'end'
+  check (phase in ('start','end'));
 
 -- 102_habits.sql
 create table habits (
@@ -1178,15 +1191,17 @@ Respuesta de un bloque:
 `POST /api/v1/verify-photo` — Auth: usuario.
 Request:
 ```json
-{ "block_id": "uuid", "photo_path": "evidence-photos/<uid>/<block>/<ts>.jpg" }
+{ "block_id": "uuid", "photo_path": "evidence-photos/<uid>/<block>/<ts>.jpg", "phase": "start" }
 ```
+`phase` (D-10, §C-13.2): `'start'` verifica la foto de arranque del bloque, `'end'` (default, compatibilidad con clientes previos a 2.1.2) verifica la de cierre — cada una exige un estado de bloque distinto.
+
 Comportamiento (orden **[NORMATIVO]**):
-1. Verifica sesión y que el bloque pertenece al usuario y está en `awaiting_photo` (409 si no).
+1. Verifica sesión y que el bloque pertenece al usuario y está en el estado que exige `phase` (`start`→`awaiting_start_photo`, `end`→`awaiting_photo`; 409 si no).
 2. Genera URL firmada ≤ 60 s para `photo_path` (§C-8.5).
-3. `callAI(userId,'photo_verify',{modality:'vision',system:VERIFY_PROMPT,userData:taskName,imageUrl})` (incluye pre-cobro INV-2).
+3. `callAI(userId,'photo_verify',{modality:'vision',system:VERIFY_PROMPT,userData:taskName,imageUrl})` (incluye pre-cobro INV-2; mismo coste en ambas fases).
 4. Parsea JSON `{verified,confidence,message}`.
-5. Inserta `evidence` (con `usage_log_id`, `confidence`, `provider`).
-6. Si `verified` ⇒ transición `block.status='verified'`, `streak++` (regla §C-13.3).
+5. Inserta `evidence` (con `usage_log_id`, `confidence`, `provider`, `phase`).
+6. Si `verified`: fase `start` ⇒ transición `block.status='active'`; fase `end` ⇒ transición `block.status='verified'`, `streak++` (regla §C-13.3).
 7. Responde:
 ```json
 { "verified": true, "confidence": 0.92, "message": "¡Buen trabajo!", "balance": 0.294 }
@@ -1224,7 +1239,7 @@ Errores: 402 sin créditos; 409 estado inválido; 503/encolado si `ai_vision_exh
 | POST | `/internal/monetization/run` | Ejecuta triggers (§C-9.7). Llamado por n8n con secreto. |
 | POST | `/internal/cleanup/run` | Ejecuta retención (§C-15). Llamado por n8n. |
 | POST | `/internal/ai-usage/reconcile` | Normaliza `ai_daily_usage` contra `usage_log` (§C-12.2). Llamado por n8n con `INTERNAL_ADMIN_SECRET` (credencial nativa, §C-25 D-6). |
-| POST | `/internal/whatsapp-inbound` | Recibe mensajes de WhatsApp reenviados por n8n (D-8, §C-13.10). Idempotente por `wamid` (INV-6). |
+| POST | `/internal/whatsapp-inbound` | Recibe mensajes de WhatsApp reenviados por n8n (D-8, §C-13.10). Idempotente por `wamid` (INV-6). Incluye la palabra clave de arranque diario (D-10). |
 
 Los 5 endpoints autentican igual: `authorizeInternal()` (`apps/flowday/lib/internal-auth.ts`) compara `x-internal-secret` contra `INTERNAL_ADMIN_SECRET` en tiempo constante (M-5). Ninguno usa HMAC — el viejo `POST /api/v1/webhooks/n8n` (§C-11.6, §C-12.3) sigue existiendo por compatibilidad histórica (INV-9) pero ya no lo llama ningún workflow real.
 
@@ -1342,27 +1357,35 @@ Procesamiento:
 
 ### C-13.2. Máquina de estados del bloque [NORMATIVO]
 
-```
-            (n8n start_block)        (n8n end_block / usuario)        (verify-photo OK)
- pending ───────────────► active ───────────────► awaiting_photo ───────────────► verified
-    │                        │                          │
-    │                        │                          └──(no foto y usuario marca)──► skipped
-    └──(usuario edita/borra) │
-                             └──(usuario marca saltar)──► skipped
-```
-- Transiciones válidas: `pending→active`, `active→awaiting_photo`, `awaiting_photo→verified`, `active→skipped`, `awaiting_photo→skipped`. Cualquier otra ⇒ 409.
-- Disparadores: `start_block`/`end_block` por n8n (§C-12.3); `verified` por `verify-photo` (§C-11.3); `skipped` por acción del usuario.
-- `photo_overdue` (n8n) no cambia estado; solo dispara recordatorio push (§C-13.5).
+> Extendida en 2.1.2 (D-10) con foto de inicio, además de la de fin, para el flujo guiado
+> paso a paso (§C-13.3/§C-13.10). `awaiting_start_photo` es opcional en la práctica: un bloque
+> creado ya `active` (p. ej. vía `PATCH /api/v1/blocks/:id` fuera del flujo guiado) sigue siendo
+> válido — la fase de inicio es la entrada por defecto del scheduler y de WhatsApp, no la única.
 
-### C-13.3. Ciclo de accountability (camino feliz)
+```
+        (llega la hora,        (verify-photo OK,     (n8n end_block          (verify-photo OK,
+         scheduler)             phase=start)          / usuario)              phase=end)
+ pending ──────────► awaiting_start_photo ──────► active ──────────► awaiting_photo ──────────► verified
+    │                        │                        │                          │
+    │                        │                        │                          └──(no foto y usuario marca)──► skipped
+    └──(usuario edita/borra) │                        │
+                             └──(sin foto, vence)──► skipped ◄──(usuario marca saltar)──┘
+```
+- Transiciones válidas: `pending→awaiting_start_photo`, `awaiting_start_photo→active`, `active→awaiting_photo`, `awaiting_photo→verified`, `awaiting_start_photo→skipped`, `active→skipped`, `awaiting_photo→skipped`. Cualquier otra ⇒ 409.
+- Disparadores: `start_block`→`awaiting_start_photo` por el scheduler (§C-13.3); `verify-photo phase=start`→`active` (§C-11.3); `end_block` por n8n (§C-12.3)→`awaiting_photo`; `verify-photo phase=end`→`verified`; `skipped` por acción del usuario o por vencimiento de la ventana de foto de inicio (§C-13.5, a diferencia de `awaiting_photo`, que nunca se auto-marca).
+- `photo_overdue` (n8n) no cambia el estado de `awaiting_photo`; solo dispara recordatorio push (§C-13.5).
 
-1. **start_block** → `active`; push "Bloque iniciado: <label>". Si hay `task_id`, se muestra la tarea.
-2. Usuario trabaja; la PWA muestra timer (focus mode opcional).
-3. **block_warning** (~10 min antes) → push "Faltan 10 min, prepara tu foto".
-4. **end_block** → `awaiting_photo`; push "Sube tu foto".
-5. Usuario captura foto → sube a Storage (`photo_path`) → `POST /verify-photo`.
-6. Router de IA verifica (pre-cobro). Si `verified`: `verified`, `streak++`, push de felicitación.
-7. Si rechazada por contenido: se informa, **se cobró** el intento, usuario puede reintentar.
+### C-13.3. Ciclo de accountability (camino feliz) [NORMATIVO — extendido en 2.1.2, D-10]
+
+1. **Llega la hora de inicio** (scheduler, §C-13.2) → `awaiting_start_photo`; push/WhatsApp "Empieza <label>, mándame una foto de que arrancaste". Si hay `task_id`, se muestra la tarea.
+2. Usuario captura foto de inicio → sube a Storage → `POST /verify-photo {phase:'start'}`.
+3. Router de IA verifica (pre-cobro, mismo coste que la de fin). Si `verified`: `active`; push/WhatsApp de confirmación con la hora de cierre.
+4. Usuario trabaja; la PWA muestra timer (focus mode opcional).
+5. **block_warning** (~10 min antes del fin) → push "Faltan 10 min, prepara tu foto".
+6. **end_block** → `awaiting_photo`; push "Sube tu foto".
+7. Usuario captura foto de fin → sube a Storage → `POST /verify-photo {phase:'end'}`.
+8. Router de IA verifica (pre-cobro). Si `verified`: `verified`, `streak++`, push/WhatsApp de felicitación y, si hay más bloques `pending` ese día, se anuncia el siguiente (§C-13.10).
+9. Si una foto (inicio o fin) es rechazada por contenido: se informa, **se cobró** el intento, usuario puede reintentar.
 
 **Streak (regla [NORMATIVO]):** `streak` cuenta días consecutivos con al menos un bloque `verified`. Si un día calendario (en tz del usuario) pasa sin ningún `verified`, `streak` se reinicia a 0. El incremento ocurre en la primera verificación del día.
 
@@ -1384,6 +1407,7 @@ ejercicio → ropa/contexto deportivo; descanso → contexto de pausa; rechaza i
 
 - A los 15 min en `awaiting_photo` sin evidencia, `photo-reminder` dispara push; se repite hasta 3 veces cada 5 min.
 - Tras el 3.º sin acción, el bloque permanece `awaiting_photo` (el usuario puede subir foto tarde o marcar `skipped`). No se auto-marca para preservar honestidad del historial (INV-11).
+- **`awaiting_start_photo` (D-10, distinto de lo anterior):** si el bloque termina (`end_time`) sin que llegara la foto de inicio, el job `schedule` transiciona el bloque a `skipped` automáticamente — a diferencia de `awaiting_photo`, aquí no hubo trabajo que preservar en el historial, así que no hay tensión con INV-11. `reminders` avisa antes de ese vencimiento igual que con `awaiting_photo`.
 
 ### C-13.6. Compra de créditos / upgrade de plan
 
@@ -1421,10 +1445,21 @@ WhatsApp Business Cloud API oficial (Meta) es un **canal adicional opt-in** (AR-
 **Recepción de mensajes.** El workflow n8n `whatsapp-inbound.json` (§C-12.2) usa el nodo WhatsApp Trigger, que maneja el handshake `hub.challenge` y valida la firma `X-Hub-Signature-256` propia de Meta — n8n no decide negocio (AR-3), solo reenvía. El nodo **ya desempaqueta** el sobre `entry[].changes[]` de Meta y manda `change.value` directo (`{messaging_product, metadata, contacts, messages, field}`, un item por `change`), no el sobre completo — el zod schema de la app (`InboundBody`) valida esa forma desempaquetada, no la cruda de Meta. A diferencia del canal original de n8n (§C-12.3, HMAC), este workflow autentica contra la app igual que el resto de `/internal/*` (D-6): credencial nativa `httpHeaderAuth` (`FlowDay Internal Admin`), sin `$env`. La app procesa cada mensaje con `processOnce(message.id, 'whatsapp', ...)` (INV-6, `packages/core/src/events/idempotency.ts`) en `POST /internal/whatsapp-inbound` (§C-11.7).
 
 Con el `wa_id` vinculado a un usuario:
-- **Imagen:** se descarga el media vía Graph API con `WHATSAPP_ACCESS_TOKEN` (`packages/core/src/notifications/whatsapp.ts:fetchWhatsAppMedia`), se sube a `evidence-photos/{user_id}/{block_id}/{ts}.ext` (mismo bucket/convención que la PWA), se resuelve `block_id` como el único bloque del usuario en `awaiting_photo` (si hay 0 o >1, se responde pidiendo aclarar en la PWA en vez de adivinar) y se llama `verifyPhoto()` (`apps/flowday/lib/verify-photo.ts`) sin duplicar lógica — mismo pre-cobro (INV-2), mismo router de IA, misma tabla `evidence`.
-- **Texto:** comandos cortos — `saldo` (balance de créditos), `racha` (streak actual), `saltar` (transiciona el bloque activo/`awaiting_photo` vía `canTransition`, `apps/flowday/lib/blocks/state-machine.ts`); cualquier otro texto recibe un mensaje de ayuda corto.
+- **Imagen:** se descarga el media vía Graph API con `WHATSAPP_ACCESS_TOKEN` (`packages/core/src/notifications/whatsapp.ts:fetchWhatsAppMedia`), se sube a `evidence-photos/{user_id}/{block_id}/{ts}.ext` (mismo bucket/convención que la PWA), se resuelve `block_id` como el único bloque del usuario en `awaiting_start_photo` **o** `awaiting_photo` (si hay 0 o >1 candidatos entre ambos estados, se responde pidiendo aclarar en la PWA en vez de adivinar) y se llama `verifyPhoto()` (`apps/flowday/lib/verify-photo.ts`) con la `phase` que corresponda al estado encontrado, sin duplicar lógica — mismo pre-cobro (INV-2), mismo router de IA, misma tabla `evidence`.
+- **Texto:** comandos cortos — `saldo` (balance de créditos), `racha` (streak actual), `saltar` (transiciona el bloque activo/`awaiting_start_photo`/`awaiting_photo` vía `canTransition`, `apps/flowday/lib/blocks/state-machine.ts`); la palabra clave de arranque (ver abajo); cualquier otro texto recibe un mensaje de ayuda corto.
 
 **Envío de mensajes.** `sendWhatsAppText()` (`packages/core/src/notifications/whatsapp.ts`) responde solo dentro de la ventana de sesión de 24 h que abre el mensaje inbound del usuario — texto libre, nunca plantillas en esta fase, por lo que no introduce costo nuevo (el único gasto de IA sigue siendo el ya cubierto por AR-9/§C-9).
+
+**Guía diaria secuencial por palabra clave (2.1.2, D-10) [NORMATIVO].** El usuario, no la app, inicia la conversación de cada día — así toda respuesta cae dentro de la ventana de 24 h que él mismo abrió y **nunca hace falta una plantilla aprobada por Meta ni hay costo por mensaje** (a diferencia de lo diferido en D-8/§C-13.10 arriba, que sigue sin resolverse porque sigue sin ser necesario).
+
+- **Palabra clave:** `handleCommand` reconoce `/^(comenzar|empezar|iniciar|start|dale)$/i` (case-insensitive, sin distinguir acentos). Al recibirla:
+  1. Llama `getOrComputeDailyPlan(userId, hoy)` (§C-26, `apps/flowday/lib/planning/daily-plan.ts`) — genera o reutiliza (cache por hash) el plan del día y crea los `blocks` (`pending`) que falten.
+  2. El scheduler (job `schedule`, §C-12.2) ya transiciona a `awaiting_start_photo` los bloques cuya hora de inicio llegó; si el primer bloque `pending`/`awaiting_start_photo` del día todavía no llegó a su hora, el mensaje avisa igualmente cuál es y a qué hora empieza.
+  3. Responde: *"Buenos días! Hoy empezamos con **{label}** ({start}–{end}). Mándame una foto cuando arranques."*
+- **Foto de inicio verificada** (`phase='start'`, transición a `active`): responde *"✓ Arrancado. Nos vemos a las {end} con la foto de que terminaste."*
+- **Foto de fin verificada** (`phase='end'`, transición a `verified`): busca el siguiente bloque `pending` del día en orden cronológico.
+  - Si hay uno: *"✓ {label} verificado. Siguiente: **{next.label}** ({next.start}–{next.end})."*
+  - Si no hay más: *"✓ Eso es todo por hoy. Buen trabajo — escribe **comenzar** mañana para seguir."* — este es el cierre que le recuerda al usuario abrir él mismo la conversación de mañana, cerrando el ciclo sin dejar ningún mensaje proactivo pendiente.
 
 ---
 
@@ -1972,6 +2007,10 @@ WhatsApp se añade como **canal adicional opt-in**, nunca reemplazo de la PWA ni
 
 Ollama (`qwen3:8b`) servía como respaldo de texto best-effort, incluida una ruta especial para el fundador (`FOUNDER_USER_ID`). Se **elimina por completo**: 8–12 tok/s en CPU es una latencia inaceptable incluso fuera de ruta crítica. Sin Ollama, cuando Groq y Cerebras agotan su cuota diaria el mismo día no queda alternativa gratuita — se extiende el flag `vision_paid_fallback_active` (D-2) para que **MiniMax M3 sirva también texto** en ese caso; con el flag inactivo, `getAIProvider` lanza `AppError('ai_text_exhausted')` **antes** de cobrar (INV-2, nuevo código en el catálogo de errores, §C-14.2). `providers/minimax.ts` usa el mismo helper `openAICompatibleChat` que Groq/Cerebras (`providers/shared.ts`), extendido con contenido multimodal opcional (`imageUrl`) para cuando sirve visión. Se elimina `providers/ollama.ts`, `'ollama'` de `AIProviderName`, y las variables `OLLAMA_BASE_URL`/`FOUNDER_USER_ID` (§C-24).
 
+### D-10. Guía diaria por WhatsApp sin plantilla: el usuario siempre inicia la conversación (§C-13.10, §C-26)
+
+D-8 dejó la mensajería proactiva por WhatsApp deliberadamente diferida por su costo (plantilla aprobada por Meta, cobro por mensaje). Se resuelve sin ese costo: en vez de que la app escriba primero cada mañana, el usuario escribe una palabra clave (`comenzar`/`empezar`/`iniciar`/sinónimos, §C-13.10) para arrancar su día — eso abre la ventana de respuesta libre de 24 h de Meta, y toda la guía subsiguiente (siguiente bloque tras cada foto verificada, cierre del día) vive dentro de esa misma ventana o de las que reabren las fotos del propio usuario. **Nunca es la app quien inicia**, así que no se necesita plantilla ni se introduce costo por mensaje — D-8 sigue vigente como está: mensajería proactiva sigue diferida, simplemente ya no hace falta para este flujo. Esto se combina con dos piezas nuevas: la implementación real de la auto-organización de Calendar/Tasks (§C-26, hasta 2.1.1 solo especificada) y el modelo de doble foto por bloque (inicio + fin, §C-13.2/§C-13.3) para que la guía pueda decir "mándame la foto de que arrancaste" y no solo la de cierre.
+
 ---
 
 ## C-26. Auto-organización de Calendar/Tasks (Pro+)
@@ -1998,6 +2037,8 @@ Un evento de Google Calendar con `start.dateTime` y `end.dateTime` (hora exacta,
 ### C-26.4. Disparo principal: 1×/día vía morning-briefing [NORMATIVO]
 
 La reorganización principal corre **una vez al día** aprovechando el cron existente `morning-briefing` (§C-12.2, resuelto a ~05:00 local por la app). El endpoint de briefing, además del push, dispara la reorganización del día (respetando la cache §C-26.3: si el hash no cambió desde la última, no gasta IA). No se añade un cron nuevo.
+
+**Disparo alterno bajo demanda (2.1.2, D-10):** el mismo `getOrComputeDailyPlan` que llama `briefing` también lo llama la palabra clave de arranque de WhatsApp (§C-13.10) si el usuario escribe antes de que corra el cron de las 05:00, o si `morning-briefing` aún no procesó su horario. Esto no viola "una llamada de IA por día": la cache por hash (§C-26.3) hace que la segunda invocación del mismo día sea gratis sin importar cuál de las dos rutas llegó primero.
 
 ### C-26.5. Cambios manuales del usuario: debounce de 30 s [NORMATIVO]
 

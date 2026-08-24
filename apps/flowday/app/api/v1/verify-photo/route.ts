@@ -11,6 +11,7 @@ export const dynamic = 'force-dynamic';
 const Body = z.object({
   block_id: z.string().uuid(),
   photo_path: z.string().min(1),
+  phase: z.enum(['start', 'end']).default('end'), // §C-11.3, D-10
 });
 
 export async function POST(request: Request) {
@@ -33,14 +34,15 @@ export async function POST(request: Request) {
       throw new AppError('bad_request', { reason: 'photo_path_owner_mismatch' });
     }
 
-    // (1) bloque del usuario + estado awaiting_photo (RLS asegura propiedad).
+    // (1) bloque del usuario + estado que exige la fase (RLS asegura propiedad).
     const { data: block, error } = await supabase
       .from('blocks')
       .select('id, type, label, status')
       .eq('id', parsed.data.block_id)
       .single();
     if (error || !block) throw new AppError('not_found');
-    if (block.status !== 'awaiting_photo') throw new AppError('block_state_invalid');
+    const requiredStatus = parsed.data.phase === 'start' ? 'awaiting_start_photo' : 'awaiting_photo';
+    if (block.status !== requiredStatus) throw new AppError('block_state_invalid');
 
     const result = await verifyPhoto({
       userId,
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
       photoPath: rel,
       blockType: block.type,
       taskName: block.label,
+      phase: parsed.data.phase,
     });
 
     logger.info({

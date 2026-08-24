@@ -192,10 +192,25 @@
 | Vuelta a Oracle Always Free, 1 OCPU/6GB sin Ollama (D-7) | `apps/flowday/docker/oracle/{docker-compose.yml,README.md,nginx.conf}` |
 | Infra de testing opt-in (§C-18.6) | `apps/flowday/scripts/test-n8n-workflows.mjs`, `apps/flowday/tests/postman/`, `apps/flowday/e2e/`, `apps/flowday/scripts/run-lighthouse.mjs` |
 
+## Fase 7 — Guía diaria por WhatsApp sin plantilla (D-10, §C-13.2/§C-13.3/§C-13.10/§C-26)
+
+| Requisito | Archivo |
+|---|---|
+| Auto-organización real (§C-26, hasta Fase 5 solo especificada) | `apps/flowday/lib/planning/daily-plan.ts` (`getOrComputeDailyPlan`), `plan-prompt.ts` |
+| evidence.phase / verification_queue.phase (§C-7.2, §C-14.3) | `apps/flowday/db/migrations/108_evidence_phase.sql` |
+| Estado `awaiting_start_photo` (§C-13.2) | `apps/flowday/lib/blocks/state-machine.ts`, `packages/core/src/supabase/types.ts` (`BlockStatus`) |
+| Doble foto por bloque, `phase` en verify-photo (§C-11.3, §C-13.3) | `apps/flowday/lib/verify-photo.ts`, `apps/flowday/app/api/v1/verify-photo/route.ts` |
+| Scheduler: `awaiting_start_photo` en schedule/reminders, briefing dispara el plan | `apps/flowday/app/internal/scheduler/run/route.ts` |
+| Palabra clave "comenzar"/siguiente bloque/cierre del día (D-10, §C-13.10) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` (`handleStartDay`, `announceNextBlock`) |
+| UI de foto de inicio (PWA) | `apps/flowday/components/blocks/DayBoard.tsx` |
+| Rango de día local para Calendar (§C-26.2) | `apps/flowday/lib/datetime.ts` (`localDayRangeUtc`, `localTimeHHMM`), `lib/google/calendar.ts` |
+
 ## Estado
 
 Fases 0–5 en producción (`origin/master`, PRs #1–#5). Fase 6 (WhatsApp + Ollama descartado +
 vuelta a Oracle) reconciliada por fusión el 2026-08-24. Migraciones 011/012 (ya aplicadas en
 junio por origin) y 107_whatsapp_links (aplicada 2026-08-24, ver §C-7.2) confirmadas en vivo
 contra el proyecto Supabase; 106_reorg_cache es un backfill del archivo, la tabla ya existía.
-Pendiente: push, y prueba end-to-end en vivo del canal WhatsApp (§C-13.10).
+Fase 7 (guía diaria por WhatsApp, D-10) implementada 2026-08-24 sobre esa base; migración 108
+pendiente de aplicar contra Supabase (`bash packages/db/scripts/apply-migrations.sh`) y de
+probar end-to-end contra la cuenta real, igual que el resto del canal WhatsApp (§C-13.10).

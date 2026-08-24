@@ -4,14 +4,17 @@ import { refundCredits } from '@flowday/core/credits/check';
 import { ACTION_COSTS } from '@flowday/core/credits/pricing';
 import { AppError } from '@flowday/core/errors';
 import { logger } from '@flowday/core/observability/logger';
+import type { EvidencePhase } from '@flowday/core/supabase/types';
 import { createServiceClient } from '@/lib/supabase/service';
 import { localDate, addDays } from '@/lib/datetime';
 import { buildVerifyPrompt, parseVerifyResponse } from '@/lib/verify-prompt';
 
 // =============================================================================
-// Verificación de foto  [NORMATIVO — SPEC §C-11.3, §C-13.3, §C-13.4]
+// Verificación de foto  [NORMATIVO — SPEC §C-11.3, §C-13.2, §C-13.3, §C-13.4, D-10]
 // VERIFY_PROMPT recibe el TYPE del bloque (enum seguro) en `system` y el nombre de la
 // tarea como `userData` (nunca interpolado, §C-10.5 / S3). Helpers puros en ./verify-prompt.
+// `phase` distingue la foto de arranque (awaiting_start_photo→active) de la de cierre
+// (awaiting_photo→verified, streak++) — mismo prompt, mismo coste, transición distinta.
 // =============================================================================
 
 export interface VerifyPhotoInput {
@@ -20,6 +23,7 @@ export interface VerifyPhotoInput {
   photoPath: string; // ruta dentro del bucket: {user_id}/{block_id}/{ts}.jpg
   blockType: string;
   taskName: string;
+  phase?: EvidencePhase; // default 'end' (compatibilidad con clientes previos a 2.1.2)
   /**
    * true cuando el reproceso viene del drenado de verification_queue (§C-14.3): en ese caso
    * NO se vuelve a encolar al agotarse la visión (la fila ya está en la cola), solo se propaga.
@@ -36,6 +40,7 @@ export interface VerifyPhotoResult {
 
 export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoResult> {
   const svc = createServiceClient();
+  const phase: EvidencePhase = input.phase ?? 'end';
 
   // (2) URL firmada ≤ 60 s (§C-8.5). El verificador accede vía backend, nunca URL pública.
   const { data: signed, error: signErr } = await svc.storage
@@ -61,6 +66,7 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
         user_id: input.userId,
         block_id: input.blockId,
         photo_path: input.photoPath,
+        phase,
       });
       logger.warn({ event: 'verify.enqueued_vision_exhausted', user_id: input.userId });
     }
@@ -75,6 +81,7 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
     block_id: input.blockId,
     user_id: input.userId,
     photo_path: input.photoPath,
+    phase,
     verified: parsed.verified,
     confidence: parsed.confidence,
     verification_msg: parsed.message,
@@ -90,10 +97,14 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
     throw new AppError('internal');
   }
 
-  // (6) verified ⇒ transición + streak (≤ 1/día, §C-13.3).
+  // (6) verified ⇒ transición según fase; streak (≤ 1/día, §C-13.3) solo en la fase de cierre.
   if (parsed.verified) {
-    await svc.from('blocks').update({ status: 'verified' }).eq('id', input.blockId);
-    await updateStreak(input.userId);
+    if (phase === 'start') {
+      await svc.from('blocks').update({ status: 'active' }).eq('id', input.blockId);
+    } else {
+      await svc.from('blocks').update({ status: 'verified' }).eq('id', input.blockId);
+      await updateStreak(input.userId);
+    }
   }
 
   // (7) saldo actual
@@ -135,6 +146,7 @@ async function updateStreak(userId: string): Promise<void> {
     .select('created_at')
     .eq('user_id', userId)
     .eq('verified', true)
+    .eq('phase', 'end') // solo la foto de cierre cuenta para el streak (D-10): la de inicio no es "trabajo terminado".
     .gte('created_at', addDays(now, -3).toISOString());
 
   const all = rows ?? [];

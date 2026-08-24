@@ -1,14 +1,16 @@
 // =============================================================================
-// Máquina de estados del bloque  [NORMATIVO — SPEC §C-13.2]
+// Máquina de estados del bloque  [NORMATIVO — SPEC §C-13.2, D-10]
 // Transiciones válidas:
-//   pending→active, active→awaiting_photo, awaiting_photo→verified,
+//   pending→awaiting_start_photo, awaiting_start_photo→active, awaiting_start_photo→skipped,
+//   active→awaiting_photo, awaiting_photo→verified,
 //   active→skipped, awaiting_photo→skipped.  Cualquier otra ⇒ block_state_invalid (409).
 // =============================================================================
 
 import type { BlockStatus } from '@flowday/core/supabase/types';
 
 const VALID_TRANSITIONS: Record<BlockStatus, readonly BlockStatus[]> = {
-  pending: ['active'],
+  pending: ['awaiting_start_photo'],
+  awaiting_start_photo: ['active', 'skipped'],
   active: ['awaiting_photo', 'skipped'],
   awaiting_photo: ['verified', 'skipped'],
   verified: [],
@@ -23,6 +25,7 @@ export function canTransition(from: string, to: BlockStatus): boolean {
 
 export const BLOCK_STATUSES: readonly BlockStatus[] = [
   'pending',
+  'awaiting_start_photo',
   'active',
   'awaiting_photo',
   'verified',
