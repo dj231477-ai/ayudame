@@ -152,7 +152,7 @@ async function handlePhoto(
   // busca entre ambos estados y se verifica con la fase que corresponda al que se encuentre.
   const { data: blocks } = await svc
     .from('blocks')
-    .select('id, type, label, status')
+    .select('id, type, label, status, task_id')
     .eq('user_id', userId)
     .in('status', ['awaiting_start_photo', 'awaiting_photo']);
 
@@ -193,6 +193,7 @@ async function handlePhoto(
       photoPath,
       blockType: block.type,
       taskName: block.label,
+      taskId: block.task_id,
       phase,
     });
     if (!result.verified) {

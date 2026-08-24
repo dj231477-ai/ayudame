@@ -8,13 +8,15 @@ import type { EvidencePhase } from '@flowday/core/supabase/types';
 import { createServiceClient } from '@/lib/supabase/service';
 import { localDate, addDays } from '@/lib/datetime';
 import { buildVerifyPrompt, parseVerifyResponse } from '@/lib/verify-prompt';
+import { completeTask } from '@/lib/google/tasks';
 
 // =============================================================================
 // Verificación de foto  [NORMATIVO — SPEC §C-11.3, §C-13.2, §C-13.3, §C-13.4, D-10]
 // VERIFY_PROMPT recibe el TYPE del bloque (enum seguro) en `system` y el nombre de la
 // tarea como `userData` (nunca interpolado, §C-10.5 / S3). Helpers puros en ./verify-prompt.
 // `phase` distingue la foto de arranque (awaiting_start_photo→active) de la de cierre
-// (awaiting_photo→verified, streak++) — mismo prompt, mismo coste, transición distinta.
+// (awaiting_photo→verified, streak++, completa la tarea en Google Tasks si aplica, D-13) —
+// mismo prompt, mismo coste, transición distinta.
 // =============================================================================
 
 export interface VerifyPhotoInput {
@@ -23,6 +25,7 @@ export interface VerifyPhotoInput {
   photoPath: string; // ruta dentro del bucket: {user_id}/{block_id}/{ts}.jpg
   blockType: string;
   taskName: string;
+  taskId?: string | null; // Google Tasks id del bloque (blocks.task_id, §C-7.2) — completa la tarea al verificar (D-13)
   phase?: EvidencePhase; // default 'end' (compatibilidad con clientes previos a 2.1.2)
   /**
    * true cuando el reproceso viene del drenado de verification_queue (§C-14.3): en ese caso
@@ -104,6 +107,17 @@ export async function verifyPhoto(input: VerifyPhotoInput): Promise<VerifyPhotoR
     } else {
       await svc.from('blocks').update({ status: 'verified' }).eq('id', input.blockId);
       await updateStreak(input.userId);
+      if (input.taskId) {
+        // D-13: el usuario solo agrega tareas en Google Tasks, la IA las completa al verificar.
+        // Best-effort — un fallo aquí no revierte la verificación ya cobrada y guardada (INV-11:
+        // la evidencia de FlowDay es la fuente de verdad, Google Tasks es un reflejo).
+        try {
+          const done = await completeTask(input.userId, input.taskId);
+          if (!done) logger.warn({ event: 'verify.complete_task_failed', user_id: input.userId });
+        } catch {
+          logger.warn({ event: 'verify.complete_task_failed', user_id: input.userId });
+        }
+      }
     }
   }
 

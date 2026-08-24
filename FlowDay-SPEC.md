@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.4 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.5 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -15,6 +15,8 @@
 > **Cambios en 2.1.3 (agosto 2026).** Modo de **recordatorio frecuente**, opt-in y desmarcado por defecto, pensado para TDAH/memoria débil (**D-11**, §C-13.5b): `profiles.frequent_reminders` (migración `013_frequent_reminders.sql`) activa recordatorios escalonados (espaciados lejos del límite, cada tick del cron —5 min— cerca de él) en las tres fases donde el usuario puede perderse — foto de inicio, foto de fin (sin tope, INV-11) y, por primera vez, durante el propio bloque activo. Cadencia pura y testeada en `apps/flowday/lib/blocks/reminder-cadence.ts`. Nuevo `PATCH /api/v1/profile` (§C-11.14) para activarlo desde Ajustes.
 >
 > **Cambios en 2.1.4 (agosto 2026).** Cuatro mejoras de accesibilidad TDAH/memoria débil, pedidas junto con D-11 (**D-12**, §C-13.5b/§C-13.10): (1) comando WhatsApp **"¿qué sigue?"** — responde al instante qué tienes activo o qué sigue, sin esperar la secuencia normal. (2) Comando **"posponer"** — reinicia la ventana de recordatorio de la foto pendiente (inicio o fin) sin marcar el bloque como saltado. (3) **Horario de silencio personalizable** (`profiles.quiet_hours_start`/`quiet_hours_end`, migración `014_quiet_hours.sql`, nulos = deshabilitado): silencia los avisos que origina el scheduler (push y WhatsApp) sin afectar las transiciones de estado ni las respuestas directas a un mensaje del usuario. (4) **Resumen de cierre de día**: el mensaje "eso es todo por hoy" (§C-13.10) ahora incluye cuántos bloques se verificaron y la racha actual, en vez de terminar en seco.
+>
+> **Cambios en 2.1.5 (agosto 2026).** Cierra el círculo de §C-26: al verificarse la foto de fin de un bloque ligado a una tarea de Google Tasks, `verifyPhoto()` marca esa tarea completada ahí mismo (**D-13**, §C-11.5/§C-13.3) — `completeTask()` ya existía pero no estaba conectado a este flujo. Best-effort, nunca revierte la verificación si Google Tasks falla. Deliberadamente NO incluye escribir eventos en Google Calendar ni reordenar tareas (alcance acotado explícitamente por el usuario).
 
 ---
 
@@ -1234,7 +1236,15 @@ Errores: 402 sin créditos; 409 estado inválido; 503/encolado si `ai_vision_exh
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | GET | `/api/v1/tasks` | Lista tareas del usuario (OAuth Google). |
-| POST | `/api/v1/tasks/:id/complete` | Marca tarea completada en Google Tasks. |
+| POST | `/api/v1/tasks/:id/complete` | Marca tarea completada en Google Tasks (llamada manual del usuario). |
+
+`completeTask(userId, taskId)` (`apps/flowday/lib/google/tasks.ts`) también se llama
+automáticamente desde `verifyPhoto()` cuando un bloque con `task_id` (§C-7.2) se verifica en
+fase `end` (D-13, §C-13.3 paso 8): el usuario solo agrega tareas en Google Tasks, nunca tiene que
+marcarlas completadas a mano — la IA lo hace al confirmar la evidencia. Best-effort: un fallo al
+completar la tarea en Google (token vencido, error de red) se registra pero **no** revierte la
+verificación ya cobrada y guardada — la evidencia en FlowDay es la fuente de verdad, Google Tasks
+es un reflejo.
 
 ### C-11.6. Webhooks (entrada; contratos en §C-12)
 
@@ -1402,7 +1412,11 @@ Procesamiento:
 5. **block_warning** (~10 min antes del fin) → push "Faltan 10 min, prepara tu foto".
 6. **end_block** → `awaiting_photo`; push y (si tiene WhatsApp vinculado) WhatsApp: "Tienes `PHOTO_WINDOW_MIN` minutos para mandarme la foto de que terminaste: <label>" (§C-13.5).
 7. Usuario captura foto de fin → sube a Storage → `POST /verify-photo {phase:'end'}`.
-8. Router de IA verifica (pre-cobro). Si `verified`: `verified`, `streak++`, push/WhatsApp de felicitación y, si hay más bloques `pending` ese día, se anuncia el siguiente (§C-13.10).
+8. Router de IA verifica (pre-cobro). Si `verified`: `verified`, `streak++`, y si el bloque tiene
+   `task_id` (viene de una tarea de Google Tasks encajada por §C-26), se marca completada ahí
+   mismo (`completeTask`, D-13, §C-11.5, best-effort) — el usuario solo agregó la tarea, nunca
+   tiene que ir a cerrarla a mano. Push/WhatsApp de felicitación y, si hay más bloques `pending`
+   ese día, se anuncia el siguiente (§C-13.10).
 9. Si una foto (inicio o fin) es rechazada por contenido: se informa, **se cobró** el intento, usuario puede reintentar.
 
 **Streak (regla [NORMATIVO]):** `streak` cuenta días consecutivos con al menos un bloque `verified`. Si un día calendario (en tz del usuario) pasa sin ningún `verified`, `streak` se reinicia a 0. El incremento ocurre en la primera verificación del día.
@@ -2141,6 +2155,20 @@ transiciones de estado ni las respuestas directas a un mensaje entrante (§C-13.
 resumen de cierre de día cambia "eso es todo por hoy" de un cierre en seco a refuerzo positivo
 concreto (bloques verificados/total, racha) — parte del mismo pedido de accesibilidad que D-11:
 que la app ayude a ver lo que sí se logró, no solo lo que falta.
+
+### D-13. Al verificar una tarea, se completa sola en Google Tasks (§C-11.5, §C-13.3)
+
+Pedido explícito del usuario: "el cliente solo tiene que agregar las tareas [en Google Tasks];
+si se completan/finalizan con éxito la IA debe darles completar en el Tasks". Cierra el círculo
+de §C-26 (la IA ya lee y organiza las tareas del usuario en bloques) — hasta ahora el usuario
+tenía que ir a Google Tasks a marcarlas completadas a mano después de que FlowDay ya sabía que
+se habían cumplido (evidencia verificada). `verifyPhoto()` llama `completeTask(userId, task_id)`
+(ya existía en `apps/flowday/lib/google/tasks.ts`, solo no estaba conectado a este flujo) cuando
+un bloque con `task_id` se verifica en fase `end`. Best-effort y no bloqueante: si Google Tasks
+falla (token vencido, red), se registra pero la verificación ya cobrada y guardada en FlowDay no
+se revierte — la evidencia de FlowDay es la fuente de verdad (INV-11), Google Tasks es un
+reflejo, no al revés. Deliberadamente NO incluye crear/mover eventos en Google Calendar ni
+reordenar tareas ahí — eso sigue fuera de alcance (el usuario lo confirmó al acotar el pedido).
 
 ---
 

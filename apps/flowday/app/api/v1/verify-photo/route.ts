@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     // (1) bloque del usuario + estado que exige la fase (RLS asegura propiedad).
     const { data: block, error } = await supabase
       .from('blocks')
-      .select('id, type, label, status')
+      .select('id, type, label, status, task_id')
       .eq('id', parsed.data.block_id)
       .single();
     if (error || !block) throw new AppError('not_found');
@@ -50,6 +50,7 @@ export async function POST(request: Request) {
       photoPath: rel,
       blockType: block.type,
       taskName: block.label,
+      taskId: block.task_id,
       phase: parsed.data.phase,
     });
 

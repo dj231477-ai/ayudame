@@ -229,6 +229,14 @@
 | Inputs de horario de silencio en Ajustes | `apps/flowday/components/SettingsClient.tsx` |
 | `PATCH /api/v1/profile` extendido (§C-11.14) | `apps/flowday/app/api/v1/profile/route.ts` |
 
+## Fase 10 — Completar tareas de Google Tasks al verificar (D-13)
+
+| Requisito | Archivo |
+|---|---|
+| `verifyPhoto()` llama `completeTask` en fase `end` con `task_id` (§C-13.3 paso 8) | `apps/flowday/lib/verify-photo.ts` |
+| `completeTask` (ya existía, ahora conectado) | `apps/flowday/lib/google/tasks.ts` |
+| `task_id` pasado desde los 3 call sites de `verifyPhoto` | `apps/flowday/app/api/v1/verify-photo/route.ts`, `app/internal/whatsapp-inbound/route.ts`, `app/internal/scheduler/run/route.ts` (`runVerifyQueue`) |
+
 ## Estado
 
 Fases 0–5 en producción (`origin/master`, PRs #1–#5). Fase 6 (WhatsApp + Ollama descartado +
@@ -236,6 +244,11 @@ vuelta a Oracle) reconciliada por fusión el 2026-08-24. Migraciones 011/012 (ya
 junio por origin), 107_whatsapp_links, 108_evidence_phase, 013_frequent_reminders y
 014_quiet_hours aplicadas contra el proyecto Supabase vía MCP (AR-2: nunca psql a mano contra
 prod); 106_reorg_cache es un backfill del archivo, la tabla ya existía. Fases 7 (guía diaria por
-WhatsApp, D-10), 8 (recordatorio frecuente, D-11) y 9 ("¿qué sigue?"/posponer/horario de
-silencio/resumen de cierre, D-12) implementadas 2026-08-24. Pendiente: push a `origin/master`, y
-prueba end-to-end en vivo del flujo completo contra la cuenta real (§C-13.10).
+WhatsApp, D-10), 8 (recordatorio frecuente, D-11), 9 ("¿qué sigue?"/posponer/horario de
+silencio/resumen de cierre, D-12) y 10 (completar tareas de Google Tasks al verificar, D-13)
+implementadas 2026-08-24. Confirmado en vivo contra Supabase (2026-08-24): el scheduler
+(`/internal/scheduler/run`) está siendo llamado con éxito cada ~5 min (42 hits en 24h, sin
+errores) — algo (n8n) está orquestando activamente. Pendiente de confirmar: si esa instancia es
+el VPS real o un remanente de la prueba local con ngrok; `reorg_cache` no tiene ninguna fila
+todavía para la cuenta real, y `/internal/whatsapp-inbound` no ha recibido tráfico en 7 días —
+el flujo de WhatsApp end-to-end sigue sin probarse en el entorno real (§C-13.10).

@@ -308,7 +308,7 @@ async function runVerifyQueue(svc: FlowDayClient): Promise<number> {
   for (const row of rows ?? []) {
     const { data: block } = await svc
       .from('blocks')
-      .select('status, type, label')
+      .select('status, type, label, task_id')
       .eq('id', row.block_id)
       .maybeSingle();
 
@@ -331,6 +331,7 @@ async function runVerifyQueue(svc: FlowDayClient): Promise<number> {
         photoPath: row.photo_path,
         blockType: block.type,
         taskName: block.label,
+        taskId: block.task_id,
         phase,
         fromQueue: true,
       });
