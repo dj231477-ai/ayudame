@@ -216,12 +216,26 @@
 | Avisos en awaiting_start_photo/awaiting_photo/active | `apps/flowday/app/internal/scheduler/run/route.ts` (`runSchedule`, `runReminders`) |
 | Envío por WhatsApp si hay número vinculado | `apps/flowday/lib/notify/whatsapp.ts` (`notifyWhatsAppIfLinked`) |
 
+## Fase 9 — "¿Qué sigue?", posponer, horario de silencio personalizable, resumen de cierre (D-12)
+
+| Requisito | Archivo |
+|---|---|
+| profiles.quiet_hours_start/end (§C-7.1) | `packages/db/migrations/014_quiet_hours.sql` |
+| `isQuietHours` pura + tests (§C-13.5c) | `apps/flowday/lib/blocks/quiet-hours.ts` |
+| Gate de silencio en el scheduler (nunca pausa transiciones) | `apps/flowday/app/internal/scheduler/run/route.ts` (`notifyUnlessQuiet`) |
+| Comando WhatsApp "¿qué sigue?" (§C-13.5d) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` (`handleWhatsNext`) |
+| Comando WhatsApp "posponer" (§C-13.5d) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` (`handleCommand`) |
+| Resumen de cierre de día (§C-13.5e) | `apps/flowday/lib/blocks/day-summary.ts` (`getDaySummaryText`) |
+| Inputs de horario de silencio en Ajustes | `apps/flowday/components/SettingsClient.tsx` |
+| `PATCH /api/v1/profile` extendido (§C-11.14) | `apps/flowday/app/api/v1/profile/route.ts` |
+
 ## Estado
 
 Fases 0–5 en producción (`origin/master`, PRs #1–#5). Fase 6 (WhatsApp + Ollama descartado +
 vuelta a Oracle) reconciliada por fusión el 2026-08-24. Migraciones 011/012 (ya aplicadas en
-junio por origin), 107_whatsapp_links, 108_evidence_phase y 013_frequent_reminders aplicadas
-contra el proyecto Supabase vía MCP (AR-2: nunca psql a mano contra prod); 106_reorg_cache es un
-backfill del archivo, la tabla ya existía. Fases 7 (guía diaria por WhatsApp, D-10) y 8
-(recordatorio frecuente, D-11) implementadas 2026-08-24. Pendiente: push a `origin/master`, y
+junio por origin), 107_whatsapp_links, 108_evidence_phase, 013_frequent_reminders y
+014_quiet_hours aplicadas contra el proyecto Supabase vía MCP (AR-2: nunca psql a mano contra
+prod); 106_reorg_cache es un backfill del archivo, la tabla ya existía. Fases 7 (guía diaria por
+WhatsApp, D-10), 8 (recordatorio frecuente, D-11) y 9 ("¿qué sigue?"/posponer/horario de
+silencio/resumen de cierre, D-12) implementadas 2026-08-24. Pendiente: push a `origin/master`, y
 prueba end-to-end en vivo del flujo completo contra la cuenta real (§C-13.10).

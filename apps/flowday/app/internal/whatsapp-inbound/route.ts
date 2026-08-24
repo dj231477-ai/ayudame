@@ -7,6 +7,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { canTransition, PHOTO_WINDOW_MIN } from '@/lib/blocks/state-machine';
 import { verifyPhoto } from '@/lib/verify-photo';
 import { getOrComputeDailyPlan } from '@/lib/planning/daily-plan';
+import { getDaySummaryText } from '@/lib/blocks/day-summary';
 import { localDate } from '@/lib/datetime';
 
 // =============================================================================
@@ -41,6 +42,8 @@ const InboundBody = z.object({
 
 const LINK_COMMAND = /^link\s+(\d{6})$/i;
 const START_DAY_COMMAND = /^(comenzar|empezar|iniciar|start|dale)$/i; // D-10, §C-13.10
+const WHATS_NEXT_COMMAND = /^(que sigue|qué sigue|ahora|siguiente)\??$/i; // D-12, §C-13.5d
+const POSTPONE_COMMAND = /^(posponer|pospon)$/i; // D-12, §C-13.5d
 
 function toE164(waId: string): string {
   return waId.startsWith('+') ? waId : `+${waId}`;
@@ -94,7 +97,7 @@ async function handleMessage(msg: z.infer<typeof InboundMessage>): Promise<void>
     return;
   }
 
-  await sendWhatsAppText(phone, 'No entendí ese mensaje. Manda tu foto de evidencia o escribe "saldo", "racha" o "saltar".');
+  await sendWhatsAppText(phone, 'No entendí ese mensaje. Manda tu foto de evidencia o escribe "¿qué sigue?", "saldo", "racha" o "saltar".');
 }
 
 async function handleUnlinked(
@@ -215,7 +218,8 @@ async function announceNextBlock(
   phone: string,
 ): Promise<void> {
   const { data: profile } = await svc.from('profiles').select('timezone').eq('id', userId).single();
-  const today = localDate(new Date(), profile?.timezone ?? 'America/Bogota');
+  const tz = profile?.timezone ?? 'America/Bogota';
+  const today = localDate(new Date(), tz);
 
   const { data: next } = await svc
     .from('blocks')
@@ -233,7 +237,9 @@ async function announceNextBlock(
       `Siguiente: ${next.label} (${next.start_time}–${next.end_time}). Mándame la foto cuando arranques.`,
     );
   } else {
-    await sendWhatsAppText(phone, 'Eso es todo por hoy. Buen trabajo — escribe "comenzar" mañana para seguir.');
+    // D-12, §C-13.5e: resumen de cierre en vez de terminar en seco.
+    const summary = await getDaySummaryText(svc, userId, tz);
+    await sendWhatsAppText(phone, `Eso es todo por hoy.${summary} Buen trabajo — escribe "comenzar" mañana para seguir.`);
   }
 }
 
@@ -247,6 +253,30 @@ async function handleCommand(
 
   if (START_DAY_COMMAND.test(cmd)) {
     await handleStartDay(svc, userId, phone);
+    return;
+  }
+
+  if (WHATS_NEXT_COMMAND.test(cmd)) {
+    await handleWhatsNext(svc, userId, phone);
+    return;
+  }
+
+  if (POSTPONE_COMMAND.test(cmd)) {
+    const { data: blocks } = await svc
+      .from('blocks')
+      .select('id, label, status')
+      .eq('user_id', userId)
+      .in('status', ['awaiting_start_photo', 'awaiting_photo']);
+    const candidates = blocks ?? [];
+    if (candidates.length !== 1) {
+      await sendWhatsAppText(phone, 'No encontré un único bloque esperando foto para posponer.');
+      return;
+    }
+    const block = candidates[0]!;
+    // D-12, §C-13.5d: reinicia la ventana de recordatorio (trg_blocks_touch, §C-7.2) sin
+    // cambiar el estado — "posponer" no es "saltar", solo pide más tiempo.
+    await svc.from('blocks').update({ status: block.status }).eq('id', block.id);
+    await sendWhatsAppText(phone, `Vale, tienes ${PHOTO_WINDOW_MIN} minutos más para mandarme la foto de ${block.label}.`);
     return;
   }
 
@@ -283,7 +313,63 @@ async function handleCommand(
     return;
   }
 
-  await sendWhatsAppText(phone, 'Comandos: "saldo", "racha", "saltar", "comenzar" — o manda tu foto de evidencia directo.');
+  await sendWhatsAppText(
+    phone,
+    'Comandos: "saldo", "racha", "saltar", "posponer", "¿qué sigue?", "comenzar" — o manda tu foto de evidencia directo.',
+  );
+}
+
+/**
+ * D-12, §C-13.5d: responde de inmediato qué está pasando ahora, sin esperar la secuencia normal
+ * de §C-13.10 — pensado para cuando el usuario se pierde a media tarea.
+ */
+async function handleWhatsNext(
+  svc: ReturnType<typeof createServiceClient>,
+  userId: string,
+  phone: string,
+): Promise<void> {
+  const { data: profile } = await svc.from('profiles').select('timezone').eq('id', userId).single();
+  const tz = profile?.timezone ?? 'America/Bogota';
+  const today = localDate(new Date(), tz);
+
+  const { data: current } = await svc
+    .from('blocks')
+    .select('label, start_time, end_time, status')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .in('status', ['awaiting_start_photo', 'active', 'awaiting_photo'])
+    .order('start_time', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (current) {
+    const action =
+      current.status === 'awaiting_start_photo'
+        ? 'Mándame la foto de que arrancaste.'
+        : current.status === 'active'
+          ? `Sigues en esto hasta las ${current.end_time}.`
+          : 'Mándame la foto de que terminaste.';
+    await sendWhatsAppText(phone, `Ahora mismo: ${current.label} (${current.start_time}–${current.end_time}). ${action}`);
+    return;
+  }
+
+  const { data: next } = await svc
+    .from('blocks')
+    .select('label, start_time, end_time')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .eq('status', 'pending')
+    .order('start_time', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (next) {
+    await sendWhatsAppText(phone, `Nada activo ahora. Siguiente: ${next.label} (${next.start_time}–${next.end_time}).`);
+    return;
+  }
+
+  const summary = await getDaySummaryText(svc, userId, tz);
+  await sendWhatsAppText(phone, `No tienes nada pendiente ahora mismo.${summary}`);
 }
 
 /**
@@ -325,7 +411,8 @@ async function handleStartDay(
     .maybeSingle();
 
   if (!first) {
-    await sendWhatsAppText(phone, `${greeting} ¡Ya completaste todo lo de hoy! Buen trabajo.`);
+    const summary = await getDaySummaryText(svc, userId, tz);
+    await sendWhatsAppText(phone, `${greeting} ¡Ya completaste todo lo de hoy!${summary} Buen trabajo.`);
     return;
   }
 

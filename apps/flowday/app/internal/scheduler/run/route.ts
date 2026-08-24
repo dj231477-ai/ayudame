@@ -6,6 +6,7 @@ import { authorizeInternal } from '@/lib/internal-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { canTransition, PHOTO_WINDOW_MIN } from '@/lib/blocks/state-machine';
 import { frequentReminderDue } from '@/lib/blocks/reminder-cadence';
+import { isQuietHours } from '@/lib/blocks/quiet-hours';
 import { pushToUser } from '@/lib/push/send';
 import { notifyWhatsAppIfLinked } from '@/lib/notify/whatsapp';
 import { listTasks } from '@/lib/google/tasks';
@@ -62,6 +63,8 @@ interface UserProfile {
   timezone: string;
   name: string | null;
   frequentReminders: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
 }
 
 async function profileMap(svc: FlowDayClient, userIds: string[]): Promise<Map<string, UserProfile>> {
@@ -69,11 +72,40 @@ async function profileMap(svc: FlowDayClient, userIds: string[]): Promise<Map<st
   if (userIds.length === 0) return map;
   const { data } = await svc
     .from('profiles')
-    .select('id, timezone, full_name, frequent_reminders')
+    .select('id, timezone, full_name, frequent_reminders, quiet_hours_start, quiet_hours_end')
     .in('id', userIds);
   for (const p of data ?? [])
-    map.set(p.id, { timezone: p.timezone, name: p.full_name, frequentReminders: p.frequent_reminders });
+    map.set(p.id, {
+      timezone: p.timezone,
+      name: p.full_name,
+      frequentReminders: p.frequent_reminders,
+      quietHoursStart: p.quiet_hours_start,
+      quietHoursEnd: p.quiet_hours_end,
+    });
   return map;
+}
+
+const DEFAULT_PROFILE: UserProfile = {
+  timezone: 'America/Bogota',
+  name: null,
+  frequentReminders: false,
+  quietHoursStart: null,
+  quietHoursEnd: null,
+};
+
+/**
+ * D-12, §C-13.5c: envía por push y (si hay WhatsApp vinculado) por WhatsApp, salvo que caiga en
+ * el horario de silencio del usuario — nunca pausa transiciones de estado, solo el aviso.
+ */
+async function notifyUnlessQuiet(
+  userId: string,
+  quiet: boolean,
+  push: { title: string; body: string; url: string },
+  waText?: string,
+): Promise<void> {
+  if (quiet) return;
+  await pushToUser(userId, push);
+  if (waText !== undefined) await notifyWhatsAppIfLinked(userId, waText);
 }
 
 async function runSchedule(svc: FlowDayClient): Promise<number> {
@@ -91,11 +123,7 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
   let actions = 0;
 
   for (const b of list) {
-    const profile = profiles.get(b.user_id) ?? {
-      timezone: 'America/Bogota',
-      name: null,
-      frequentReminders: false,
-    };
+    const profile = profiles.get(b.user_id) ?? DEFAULT_PROFILE;
     const zone = profile.timezone;
     const greeting = profile.name ? `${profile.name}, ` : '';
     if (b.date !== localDate(now, zone)) continue; // solo "hoy" en la tz del usuario (INV-12)
@@ -106,12 +134,13 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
     const warnMin = endMin - WARNING_BEFORE_END;
     const ageMin = (now.getTime() - new Date(b.updated_at).getTime()) / 60000;
     const within = (t: number) => nowMin >= t && nowMin < t + TICK_WINDOW;
+    // D-12, §C-13.5c: solo gatea el AVISO — las transiciones de estado de abajo siguen igual.
+    const quiet = isQuietHours(nowMin, profile.quietHoursStart, profile.quietHoursEnd);
 
     if (b.status === 'pending' && within(startMin) && canTransition('pending', 'awaiting_start_photo')) {
       await svc.from('blocks').update({ status: 'awaiting_start_photo' }).eq('id', b.id);
       const body = `${greeting}vamos a empezar con ${b.label}. Tienes ${PHOTO_WINDOW_MIN} minutos para mandarme la foto de que arrancaste.`;
-      await pushToUser(b.user_id, { title: 'Empieza tu bloque', body, url: '/focus' });
-      await notifyWhatsAppIfLinked(b.user_id, body);
+      await notifyUnlessQuiet(b.user_id, quiet, { title: 'Empieza tu bloque', body, url: '/focus' }, body);
       actions++;
     } else if (
       b.status === 'awaiting_start_photo' &&
@@ -122,17 +151,19 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
       // hubo trabajo que preservar — se venció la ventana fija de la foto de inicio.
       await svc.from('blocks').update({ status: 'skipped' }).eq('id', b.id);
       const body = `No llegó la foto de inicio a tiempo: ${b.label}. Lo salté.`;
-      await pushToUser(b.user_id, { title: 'Bloque saltado', body, url: '/focus' });
-      await notifyWhatsAppIfLinked(b.user_id, body);
+      await notifyUnlessQuiet(b.user_id, quiet, { title: 'Bloque saltado', body, url: '/focus' }, body);
       actions++;
     } else if (b.status === 'active' && within(warnMin)) {
-      await pushToUser(b.user_id, { title: 'Faltan ~10 min', body: `Prepara tu foto: ${b.label}`, url: '/focus' });
+      await notifyUnlessQuiet(b.user_id, quiet, {
+        title: 'Faltan ~10 min',
+        body: `Prepara tu foto: ${b.label}`,
+        url: '/focus',
+      });
       actions++;
     } else if (b.status === 'active' && within(endMin) && canTransition('active', 'awaiting_photo')) {
       await svc.from('blocks').update({ status: 'awaiting_photo' }).eq('id', b.id);
       const body = `Tienes ${PHOTO_WINDOW_MIN} minutos para mandarme la foto de que terminaste: ${b.label}.`;
-      await pushToUser(b.user_id, { title: 'Sube tu foto', body, url: '/focus' });
-      await notifyWhatsAppIfLinked(b.user_id, body);
+      await notifyUnlessQuiet(b.user_id, quiet, { title: 'Sube tu foto', body, url: '/focus' }, body);
       actions++;
     } else if (
       b.status === 'active' &&
@@ -143,8 +174,7 @@ async function runSchedule(svc: FlowDayClient): Promise<number> {
       // era el de "faltan 10 min" (fijo, arriba); esto añade check-ins mientras trabaja.
       const remaining = Math.max(endMin - nowMin, 0);
       const body = `¿Sigues con ${b.label}? Quedan ${remaining} min.`;
-      await pushToUser(b.user_id, { title: 'Recordatorio', body, url: '/focus' });
-      await notifyWhatsAppIfLinked(b.user_id, body);
+      await notifyUnlessQuiet(b.user_id, quiet, { title: 'Recordatorio', body, url: '/focus' }, body);
       actions++;
     }
   }
@@ -156,7 +186,7 @@ async function runReminders(svc: FlowDayClient): Promise<number> {
   // defecto tiene una ventana fija de PHOTO_WINDOW_MIN y se salta automáticamente al vencer
   // (runSchedule) sin recordatorio intermedio — uno en ese mismo instante sería redundante con
   // el aviso de "bloque saltado".
-  const now = Date.now();
+  const now = new Date();
   const { data: blocks } = await svc
     .from('blocks')
     .select('id, user_id, label, updated_at, status')
@@ -165,13 +195,19 @@ async function runReminders(svc: FlowDayClient): Promise<number> {
   const profiles = await profileMap(svc, [...new Set(list.map((b) => b.user_id))]);
   let actions = 0;
   for (const b of list) {
-    const ageMin = (now - new Date(b.updated_at).getTime()) / 60000;
-    const frequent = profiles.get(b.user_id)?.frequentReminders ?? false;
+    const ageMin = (now.getTime() - new Date(b.updated_at).getTime()) / 60000;
+    const profile = profiles.get(b.user_id) ?? DEFAULT_PROFILE;
+    const frequent = profile.frequentReminders;
+    const quiet = isQuietHours(localMinutes(now, profile.timezone), profile.quietHoursStart, profile.quietHoursEnd);
 
     if (b.status === 'awaiting_start_photo') {
       if (frequent && frequentReminderDue(ageMin, PHOTO_WINDOW_MIN - ageMin)) {
-        await pushToUser(b.user_id, { title: 'Foto de inicio pendiente', body: b.label, url: '/focus' });
-        await notifyWhatsAppIfLinked(b.user_id, `¿Ya arrancaste con ${b.label}? Mándame la foto.`);
+        await notifyUnlessQuiet(
+          b.user_id,
+          quiet,
+          { title: 'Foto de inicio pendiente', body: b.label, url: '/focus' },
+          `¿Ya arrancaste con ${b.label}? Mándame la foto.`,
+        );
         actions++;
       }
       continue;
@@ -184,8 +220,12 @@ async function runReminders(svc: FlowDayClient): Promise<number> {
       ? ageMin >= PHOTO_WINDOW_MIN && frequentReminderDue(ageMin, null)
       : ageMin >= PHOTO_WINDOW_MIN && ageMin <= PHOTO_WINDOW_MIN + 17;
     if (due) {
-      await pushToUser(b.user_id, { title: 'Foto pendiente', body: b.label, url: '/focus' });
-      if (frequent) await notifyWhatsAppIfLinked(b.user_id, `¿Ya terminaste con ${b.label}? Mándame la foto.`);
+      await notifyUnlessQuiet(
+        b.user_id,
+        quiet,
+        { title: 'Foto pendiente', body: b.label, url: '/focus' },
+        frequent ? `¿Ya terminaste con ${b.label}? Mándame la foto.` : undefined,
+      );
       actions++;
     }
   }

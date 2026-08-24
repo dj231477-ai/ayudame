@@ -17,9 +17,17 @@ interface SettingsClientProps {
   googleConnected: boolean;
   whatsappPhone: string | null;
   frequentReminders: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
 }
 
-export function SettingsClient({ googleConnected, whatsappPhone, frequentReminders }: SettingsClientProps) {
+export function SettingsClient({
+  googleConnected,
+  whatsappPhone,
+  frequentReminders,
+  quietHoursStart,
+  quietHoursEnd,
+}: SettingsClientProps) {
   const { status, subscribe } = usePush();
   const [waCode, setWaCode] = useState<string | null>(null);
   const [waBusy, setWaBusy] = useState(false);
@@ -45,6 +53,30 @@ export function SettingsClient({ googleConnected, whatsappPhone, frequentReminde
       if (e instanceof ApiError) setFrequentError(e.message);
     } finally {
       setFrequentBusy(false);
+    }
+  }
+
+  // D-12, §C-13.5c: horario de silencio personalizable — vacío = deshabilitado, nunca uno fijo.
+  const [quietStart, setQuietStart] = useState(quietHoursStart ?? '');
+  const [quietEnd, setQuietEnd] = useState(quietHoursEnd ?? '');
+  const [quietBusy, setQuietBusy] = useState(false);
+  const [quietError, setQuietError] = useState<string | null>(null);
+
+  async function saveQuietHours(start: string, end: string) {
+    setQuietError(null);
+    setQuietBusy(true);
+    try {
+      await apiFetch('/api/v1/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          quiet_hours_start: start || null,
+          quiet_hours_end: end || null,
+        }),
+      });
+    } catch (e) {
+      if (e instanceof ApiError) setQuietError(e.message);
+    } finally {
+      setQuietBusy(false);
     }
   }
 
@@ -93,6 +125,53 @@ export function SettingsClient({ googleConnected, whatsappPhone, frequentReminde
           </span>
         </label>
         {frequentError ? <p className="mt-1 text-sm text-red-600">{frequentError}</p> : null}
+      </div>
+
+      <div className="pt-4">
+        <p className="font-medium">Horario de silencio</p>
+        <p className="mb-2 text-sm text-neutral-600">
+          Ningún aviso automático (push ni WhatsApp) llega en este rango. Déjalo vacío para no
+          tener horario de silencio.
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            type="time"
+            value={quietStart}
+            disabled={quietBusy}
+            onChange={(e) => {
+              setQuietStart(e.target.value);
+              void saveQuietHours(e.target.value, quietEnd);
+            }}
+            aria-label="Desde"
+            className="rounded-lg border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+          />
+          <span className="text-sm text-neutral-600">a</span>
+          <input
+            type="time"
+            value={quietEnd}
+            disabled={quietBusy}
+            onChange={(e) => {
+              setQuietEnd(e.target.value);
+              void saveQuietHours(quietStart, e.target.value);
+            }}
+            aria-label="Hasta"
+            className="rounded-lg border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+          />
+          {quietStart || quietEnd ? (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setQuietStart('');
+                setQuietEnd('');
+                void saveQuietHours('', '');
+              }}
+              disabled={quietBusy}
+            >
+              Quitar
+            </Button>
+          ) : null}
+        </div>
+        {quietError ? <p className="mt-1 text-sm text-red-600">{quietError}</p> : null}
       </div>
 
       <div className="pt-4">

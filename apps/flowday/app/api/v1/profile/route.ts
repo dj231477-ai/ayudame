@@ -2,13 +2,18 @@ import { z } from 'zod';
 import { AppError, type Locale } from '@flowday/core/errors';
 import { requireUser, ok, fail } from '@/lib/api/respond';
 
-// SPEC §C-11.14 (D-11): ajustes propios editables desde Ajustes.
+// SPEC §C-11.14 (D-11/D-12): ajustes propios editables desde Ajustes.
 export const dynamic = 'force-dynamic';
 
-const PROFILE_SELECT = 'id,full_name,handle,plan,streak,timezone,locale,frequent_reminders';
+const PROFILE_SELECT =
+  'id,full_name,handle,plan,streak,timezone,locale,frequent_reminders,quiet_hours_start,quiet_hours_end';
+
+const TIME = z.string().regex(/^\d{2}:\d{2}$/);
 
 const PatchBody = z.object({
   frequent_reminders: z.boolean().optional(),
+  quiet_hours_start: TIME.nullable().optional(),
+  quiet_hours_end: TIME.nullable().optional(),
 });
 
 export async function PATCH(request: Request) {

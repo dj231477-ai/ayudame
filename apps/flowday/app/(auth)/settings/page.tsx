@@ -16,7 +16,7 @@ export default async function SettingsPage() {
   const [googleConnected, { data: waLink }, { data: profile }] = await Promise.all([
     isGoogleConnected(user.id),
     supabase.from('whatsapp_links').select('phone_e164').eq('user_id', user.id).maybeSingle(),
-    supabase.from('profiles').select('frequent_reminders').eq('id', user.id).single(),
+    supabase.from('profiles').select('frequent_reminders, quiet_hours_start, quiet_hours_end').eq('id', user.id).single(),
   ]);
 
   return (
@@ -32,6 +32,8 @@ export default async function SettingsPage() {
         googleConnected={googleConnected}
         whatsappPhone={waLink?.phone_e164 ?? null}
         frequentReminders={profile?.frequent_reminders ?? false}
+        quietHoursStart={profile?.quiet_hours_start?.slice(0, 5) ?? null}
+        quietHoursEnd={profile?.quiet_hours_end?.slice(0, 5) ?? null}
       />
 
       <AccountClient />

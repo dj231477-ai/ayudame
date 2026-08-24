@@ -432,6 +432,8 @@ export type Database = {
           id: string
           locale: string
           plan: string
+          quiet_hours_end: string | null
+          quiet_hours_start: string | null
           streak: number
           timezone: string
           updated_at: string
@@ -444,6 +446,8 @@ export type Database = {
           id: string
           locale?: string
           plan?: string
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
           streak?: number
           timezone?: string
           updated_at?: string
@@ -456,6 +460,8 @@ export type Database = {
           id?: string
           locale?: string
           plan?: string
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
           streak?: number
           timezone?: string
           updated_at?: string
