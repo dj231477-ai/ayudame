@@ -19,6 +19,7 @@ interface SettingsClientProps {
   frequentReminders: boolean;
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
+  maxDailyTasks: number;
 }
 
 export function SettingsClient({
@@ -27,6 +28,7 @@ export function SettingsClient({
   frequentReminders,
   quietHoursStart,
   quietHoursEnd,
+  maxDailyTasks,
 }: SettingsClientProps) {
   const { status, subscribe } = usePush();
   const [waCode, setWaCode] = useState<string | null>(null);
@@ -77,6 +79,30 @@ export function SettingsClient({
       if (e instanceof ApiError) setQuietError(e.message);
     } finally {
       setQuietBusy(false);
+    }
+  }
+
+  // D-25, §C-26.7b: tope de tareas de Google Tasks que el planificador puede encajar en un día,
+  // sin importar cuántas estén elegidas (vencidas/de hoy) — nunca "aunque haya 40, solo N".
+  const [maxTasks, setMaxTasks] = useState(maxDailyTasks);
+  const [maxTasksBusy, setMaxTasksBusy] = useState(false);
+  const [maxTasksError, setMaxTasksError] = useState<string | null>(null);
+
+  async function saveMaxDailyTasks(next: number) {
+    setMaxTasksError(null);
+    setMaxTasksBusy(true);
+    const previous = maxTasks;
+    setMaxTasks(next);
+    try {
+      await apiFetch('/api/v1/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ max_daily_tasks: next }),
+      });
+    } catch (e) {
+      setMaxTasks(previous);
+      if (e instanceof ApiError) setMaxTasksError(e.message);
+    } finally {
+      setMaxTasksBusy(false);
     }
   }
 
@@ -172,6 +198,28 @@ export function SettingsClient({
           ) : null}
         </div>
         {quietError ? <p className="mt-1 text-sm text-red-600">{quietError}</p> : null}
+      </div>
+
+      <div className="pt-4">
+        <p className="font-medium">Máximo de tareas por día</p>
+        <p className="mb-2 text-sm text-neutral-600">
+          Aunque tengas 40 tareas vencidas en Google Tasks, el planificador nunca te asigna más
+          de este número en un mismo día.
+        </p>
+        <input
+          type="number"
+          min={1}
+          max={20}
+          value={maxTasks}
+          disabled={maxTasksBusy}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isInteger(next) && next >= 1 && next <= 20) void saveMaxDailyTasks(next);
+          }}
+          aria-label="Máximo de tareas por día"
+          className="w-20 rounded-lg border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+        />
+        {maxTasksError ? <p className="mt-1 text-sm text-red-600">{maxTasksError}</p> : null}
       </div>
 
       <div className="pt-4">

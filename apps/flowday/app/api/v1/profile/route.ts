@@ -6,7 +6,7 @@ import { requireUser, ok, fail } from '@/lib/api/respond';
 export const dynamic = 'force-dynamic';
 
 const PROFILE_SELECT =
-  'id,full_name,handle,plan,streak,timezone,locale,frequent_reminders,quiet_hours_start,quiet_hours_end';
+  'id,full_name,handle,plan,streak,timezone,locale,frequent_reminders,quiet_hours_start,quiet_hours_end,max_daily_tasks';
 
 const TIME = z.string().regex(/^\d{2}:\d{2}$/);
 
@@ -14,6 +14,7 @@ const PatchBody = z.object({
   frequent_reminders: z.boolean().optional(),
   quiet_hours_start: TIME.nullable().optional(),
   quiet_hours_end: TIME.nullable().optional(),
+  max_daily_tasks: z.number().int().min(1).max(20).optional(),
 });
 
 export async function PATCH(request: Request) {

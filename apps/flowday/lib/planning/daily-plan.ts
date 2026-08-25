@@ -36,12 +36,14 @@ export interface DailyPlanBlock {
 function computeSourceHash(input: {
   dateStr: string;
   tz: string;
+  maxDailyTasks: number;
   events: { id: string; summary: string; start: string | null; end: string | null }[];
   tasks: { id: string; title: string; status: string; due?: string }[];
 }): string {
   const canon = {
     date: input.dateStr,
     tz: input.tz,
+    max_daily_tasks: input.maxDailyTasks,
     events: [...input.events]
       .map((e) => ({ id: e.id, s: e.summary, start: e.start, end: e.end }))
       .sort((a, b) => a.id.localeCompare(b.id)),
@@ -60,8 +62,9 @@ function computeSourceHash(input: {
 export async function getOrComputeDailyPlan(userId: string, dateStr: string): Promise<DailyPlanBlock[]> {
   const svc = createServiceClient();
 
-  const { data: profile } = await svc.from('profiles').select('timezone').eq('id', userId).single();
+  const { data: profile } = await svc.from('profiles').select('timezone, max_daily_tasks').eq('id', userId).single();
   const tz = profile?.timezone ?? 'America/Bogota';
+  const maxDailyTasks = profile?.max_daily_tasks ?? 5;
   const { start, end } = localDayRangeUtc(dateStr, tz);
 
   let events: Awaited<ReturnType<typeof listUpcomingEvents>> = [];
@@ -85,7 +88,7 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
     .eq('date', dateStr);
   const existingBlocks = existing ?? [];
 
-  const sourceHash = computeSourceHash({ dateStr, tz, events, tasks });
+  const sourceHash = computeSourceHash({ dateStr, tz, maxDailyTasks, events, tasks });
 
   const { data: cached } = await svc
     .from('reorg_cache')
@@ -98,7 +101,7 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
   if (cached && cached.source_hash === sourceHash) {
     plan = cached.plan as unknown as DailyPlanBlock[];
   } else {
-    plan = await computePlan(userId, dateStr, tz, events, tasks);
+    plan = await computePlan(userId, dateStr, tz, maxDailyTasks, events, tasks);
     await svc.from('reorg_cache').upsert({
       user_id: userId,
       date: dateStr,
@@ -137,6 +140,7 @@ async function computePlan(
   userId: string,
   dateStr: string,
   tz: string,
+  maxDailyTasks: number,
   events: Awaited<ReturnType<typeof listUpcomingEvents>>,
   tasks: Awaited<ReturnType<typeof listTasks>>,
 ): Promise<DailyPlanBlock[]> {
@@ -155,9 +159,14 @@ async function computePlan(
   // backlog de todas las listas (un usuario real puede tener decenas sin relación con hoy).
   // `due` de Google Tasks solo trae fecha (siempre medianoche UTC, confirmado D-24): comparar
   // el prefijo de fecha evita cualquier desfase de zona horaria al convertir con `Date`.
-  const pendingTasks = tasks.filter(
-    (t) => t.status !== 'completed' && !!t.due && t.due.slice(0, 10) <= dateStr,
-  );
+  // D-25, §C-26.7b: tope configurable por el usuario (`profiles.max_daily_tasks`) — nunca se
+  // encajan más de N tareas en un día sin importar cuántas estén elegibles. Se ordena por `due`
+  // ascendente (lo más vencido primero) antes de cortar, para que el tope se lo lleve lo más
+  // urgente si sobran candidatas.
+  const pendingTasks = tasks
+    .filter((t) => t.status !== 'completed' && !!t.due && t.due.slice(0, 10) <= dateStr)
+    .sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))
+    .slice(0, maxDailyTasks);
   const nowHHMM = localTimeHHMM(new Date(), tz);
   if (pendingTasks.length === 0 || !hasRoomToday(nowHHMM)) {
     // Nada que encajar con IA (sin tareas, o ya no queda margen hoy — D-14, §C-26.2b):
@@ -178,7 +187,9 @@ async function computePlan(
       userData: JSON.stringify(pendingTasks.map((t) => ({ id: t.id, title: t.title }))),
     });
     const planned = parsePlanResponse(ai.text, nowHHMM);
-    const aiBlocks: DailyPlanBlock[] = planned.map((p) => ({
+    // D-25: defensa en profundidad — pendingTasks ya viene acotado a maxDailyTasks, pero si el
+    // modelo no siguiera la instrucción y devolviera más, el tope se aplica igual aquí.
+    const aiBlocks: DailyPlanBlock[] = planned.slice(0, maxDailyTasks).map((p) => ({
       label: p.label,
       start_time: p.start_time,
       end_time: p.end_time,

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Source of truth
 
-**[`FlowDay-SPEC.md`](./FlowDay-SPEC.md) (v2.1.12) is the single source of truth for this project.** Where code and the SPEC differ, the SPEC wins (§C-3 R1). Read the relevant section before implementing anything — the index (`## Índice`) at the top maps every topic to its section number. Sections/blocks marked **[NORMATIVO]** must be implemented as specified (names, signatures, semantics); **[ILUSTRATIVO]** blocks communicate intent and may be adapted as long as the declared contract is respected (§C-3.2).
+**[`FlowDay-SPEC.md`](./FlowDay-SPEC.md) (v2.1.13) is the single source of truth for this project.** Where code and the SPEC differ, the SPEC wins (§C-3 R1). Read the relevant section before implementing anything — the index (`## Índice`) at the top maps every topic to its section number. Sections/blocks marked **[NORMATIVO]** must be implemented as specified (names, signatures, semantics); **[ILUSTRATIVO]** blocks communicate intent and may be adapted as long as the declared contract is respected (§C-3.2).
 
 Do not introduce a dependency, table, endpoint, or env var that isn't in the SPEC without adding it there first (R2). If a task seems to require violating an invariant (§C-2, below), stop and report the conflict instead of working around it (R3).
 

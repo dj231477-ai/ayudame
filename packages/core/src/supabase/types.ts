@@ -431,6 +431,7 @@ export type Database = {
           handle: string | null
           id: string
           locale: string
+          max_daily_tasks: number
           plan: string
           quiet_hours_end: string | null
           quiet_hours_start: string | null
@@ -445,6 +446,7 @@ export type Database = {
           handle?: string | null
           id: string
           locale?: string
+          max_daily_tasks?: number
           plan?: string
           quiet_hours_end?: string | null
           quiet_hours_start?: string | null
@@ -459,6 +461,7 @@ export type Database = {
           handle?: string | null
           id?: string
           locale?: string
+          max_daily_tasks?: number
           plan?: string
           quiet_hours_end?: string | null
           quiet_hours_start?: string | null

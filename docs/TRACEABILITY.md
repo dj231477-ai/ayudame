@@ -346,3 +346,17 @@ porque `listTasks()` solo miraba la lista `@default`.
 | Script de diagnóstico real (`GET /api/v1/tasks` con la sesión real) | `apps/flowday/scripts/debug-list-tasks.mjs` (no versionado) |
 | D-23: `computePlan` solo ofrece a la IA tareas con `due <= hoy`, no todo el backlog | `apps/flowday/lib/planning/daily-plan.ts` |
 | D-24: `scheduleTask()` — escribe `due = hoy` (sin hora, límite real de la API de Google) en cada tarea que la IA encaja hoy | `apps/flowday/lib/google/tasks.ts`, `apps/flowday/lib/planning/daily-plan.ts` (`scheduleTasksToday`) |
+
+## Fase 18 — Tope configurable de tareas por día (D-25)
+
+> El usuario preguntó qué pasa con las tareas sin fecha (D-23 las deja fuera) y pidió control
+> directo: un tope máximo de tareas por día, configurable en Ajustes, para que aunque haya 40
+> tareas vencidas nunca se le asignen más de las que él especifique.
+
+| Requisito | Archivo |
+|---|---|
+| `profiles.max_daily_tasks` (default 5, check 1..20) | `packages/db/migrations/015_max_daily_tasks.sql` |
+| Tipo generado | `packages/core/src/supabase/types.ts` |
+| `PATCH /api/v1/profile` acepta `max_daily_tasks` | `apps/flowday/app/api/v1/profile/route.ts` |
+| `computePlan` corta las tareas elegibles (ordenadas por `due` ascendente) al tope antes de la IA y de nuevo sobre el resultado; el tope entra al `source_hash` de `reorg_cache` | `apps/flowday/lib/planning/daily-plan.ts` |
+| Control numérico en Ajustes | `apps/flowday/components/SettingsClient.tsx`, `apps/flowday/app/(auth)/settings/page.tsx` |

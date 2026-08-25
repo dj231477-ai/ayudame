@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.12 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.13 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -31,6 +31,8 @@
 > **Cambios en 2.1.11 (agosto 2026).** Reportado por el usuario contra la cuenta real: mandar la foto de cierre de un bloque `active` (antes de su `end_time`) devolvía "no tienes ningún bloque esperando foto". **D-20** (§C-13.10): `handlePhoto` solo buscaba candidatos en `awaiting_start_photo`/`awaiting_photo` — por WhatsApp no existe el botón "Terminar" de la PWA que hace la transición `active→awaiting_photo` antes de pedir la foto, así que no había ninguna acción que la disparara. Fix: `handlePhoto` también acepta la foto de cierre en `active` (`verifyPhoto()` ya no exigía el paso intermedio). **D-21** (§C-13.5f): nuevo comando `lista`/`listar`/`tareas`/`mis tareas` — muestra todos los bloques de hoy con su estado en un solo mensaje, a diferencia de "¿qué sigue?" que solo muestra el ítem actual/siguiente.
 >
 > **Cambios en 2.1.12 (agosto 2026).** El usuario pidió que las tareas de hoy tuvieran fecha/hora asignada según los huecos libres de su Calendar. Investigando por qué el plan diario nunca traía ninguna tarea (solo eventos de Calendar), se encontró **D-22** (§C-26): la Google Tasks API nunca se había habilitado en el proyecto de Google Cloud del OAuth client — `listTasks()` llevaba devolviendo `[]` en silencio desde siempre (mismo patrón de degradación silenciosa que D-18/D-19), pese a que el scope sí estaba concedido. Corregido por el usuario habilitando la API; se deja logging permanente para que una falla así nunca vuelva a pasar inadvertida. Con `listTasks()` ya funcionando, dos ajustes más (§C-26.7): **D-23**, `computePlan` ahora solo ofrece a la IA las tareas con `due <= hoy` (vencidas o que vencen hoy) en vez de todo el backlog de todas las listas del usuario (40+ tareas reales, la mayoría sin relación con hoy); **D-24**, cada tarea que la IA encaja hoy recibe `due = hoy` de vuelta en Google Tasks (`scheduleTask`) — verificado contra la documentación oficial y contra la cuenta real que la API de Google Tasks **solo admite fecha, nunca hora**, en el campo `due` (límite de Google, no de FlowDay); la hora exacta sigue viviendo solo en `blocks`/WhatsApp.
+>
+> **Cambios en 2.1.13 (agosto 2026).** El usuario preguntó qué pasa con sus tareas sin fecha (D-23 las deja fuera del encaje) y pidió control directo en vez de que FlowDay decidiera una política fija: **D-25** (§C-26.7b), nuevo `profiles.max_daily_tasks` (default 5, migración `015_max_daily_tasks.sql`) editable desde Ajustes — el planificador nunca encaja más de ese número de tareas en un mismo día, sin importar cuántas estén elegibles (ordenadas por `due` ascendente, se corta al tope antes de ofrecerlas a la IA y de nuevo sobre el resultado). El tope entra al `source_hash` de `reorg_cache` (§C-26.3), así que cambiarlo fuerza recalcular el día.
 
 ---
 
@@ -2390,6 +2392,19 @@ cuenta (todo `due` vuelve como medianoche UTC). Se implementa `scheduleTask()`
 encaja en el plan del día, best-effort, sin bloquear la planificación si falla. La hora exacta
 sigue viviendo solo en `blocks`/WhatsApp.
 
+### D-25. Tope configurable de tareas por día en Ajustes (§C-26.7b)
+
+Pregunta directa del usuario tras D-23: "¿y las tareas sin fecha, qué pasa con ellas?" — llevó
+a discutir cómo debería comportarse el planificador cuando hay más tareas elegibles que huecos
+razonables en el día. Pedido explícito del usuario: en vez de decidir una política fija, que
+él controle un **tope máximo de tareas por día** desde Ajustes — aunque tenga 40 tareas
+vencidas, nunca se le asignan más de las que él configuró. Nuevo `profiles.max_daily_tasks`
+(default 5, migración `015_max_daily_tasks.sql`), editable vía `PATCH /api/v1/profile` y un
+control numérico en `SettingsClient.tsx`. `computePlan` ordena las tareas elegibles (§C-26.7)
+por `due` ascendente y corta al tope antes de ofrecérselas a la IA, con el mismo corte aplicado
+de nuevo sobre el resultado como defensa en profundidad. El tope entra al `source_hash` de
+`reorg_cache` para que cambiarlo invalide la cache del día.
+
 ---
 
 ## C-26. Auto-organización de Calendar/Tasks (Pro+)
@@ -2474,6 +2489,19 @@ Cuando el usuario edita manualmente tareas/eventos/bloques, **no** se dispara IA
   confirmado además contra la cuenta real (todo `due` leído vuelve como medianoche UTC). La
   hora exacta de cada bloque sigue viviendo únicamente en `blocks`/WhatsApp (§C-13.10) — nunca
   se intenta escribir en Google Tasks, sería descartado silenciosamente por Google.
+
+### C-26.7b. Tope configurable de tareas por día (D-25) [NORMATIVO]
+
+`profiles.max_daily_tasks` (`smallint not null default 5`, `check (1..20)`, migración
+`packages/db/migrations/015_max_daily_tasks.sql`) — editable desde Ajustes
+(`PATCH /api/v1/profile`). `computePlan` nunca encaja más de `max_daily_tasks` tareas en un
+mismo día, sin importar cuántas estén elegibles (§C-26.7): las candidatas se ordenan por `due`
+ascendente (lo más vencido primero) y se cortan a `max_daily_tasks` **antes** de llamar a la IA
+— la propia lista que se le manda al modelo ya viene acotada, y el resultado se vuelve a cortar
+al mismo tope como defensa en profundidad. `max_daily_tasks` entra al `source_hash` de
+`reorg_cache` (§C-26.3): cambiar el tope invalida la cache del día y fuerza recalcular. Un
+usuario con 40 tareas vencidas y `max_daily_tasks=5` nunca ve más de 5 asignadas ese día — las
+demás quedan en su backlog, elegibles de nuevo mañana.
 
 ---
 
