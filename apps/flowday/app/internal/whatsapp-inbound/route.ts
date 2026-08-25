@@ -45,6 +45,7 @@ const LINK_COMMAND = /^link\s+(\d{6})$/i;
 const START_DAY_COMMAND = /^(comenzar|empezar|iniciar|start|dale)$/i; // D-10, §C-13.10
 const WHATS_NEXT_COMMAND = /^(que sigue|qué sigue|ahora|siguiente)\??$/i; // D-12, §C-13.5d
 const POSTPONE_COMMAND = /^(posponer|pospon)$/i; // D-12, §C-13.5d
+const LIST_TASKS_COMMAND = /^(lista|listar|tareas|mis tareas|lista de tareas|enlistar tareas)$/i; // D-21, §C-13.5f
 
 function toE164(waId: string): string {
   return waId.startsWith('+') ? waId : `+${waId}`;
@@ -149,13 +150,17 @@ async function handlePhoto(
   phone: string,
   mediaId: string,
 ): Promise<void> {
-  // D-10: la foto puede ser de inicio (awaiting_start_photo) o de fin (awaiting_photo) — se
-  // busca entre ambos estados y se verifica con la fase que corresponda al que se encuentre.
+  // D-10: la foto puede ser de inicio (awaiting_start_photo) o de fin (awaiting_photo/active) —
+  // se busca entre esos estados y se verifica con la fase que corresponda al que se encuentre.
+  // D-20 (§C-13.10): 'active' se incluye a propósito — en la PWA, el botón "Terminar" hace la
+  // transición active→awaiting_photo *antes* de pedir la foto; por WhatsApp no existe ese botón,
+  // así que mandar la foto de cierre mientras el bloque sigue 'active' ES la señal de "terminé"
+  // (verifyPhoto ya escribe 'verified' directo sin exigir el paso intermedio por awaiting_photo).
   const { data: blocks } = await svc
     .from('blocks')
     .select('id, type, label, status, task_id')
     .eq('user_id', userId)
-    .in('status', ['awaiting_start_photo', 'awaiting_photo']);
+    .in('status', ['awaiting_start_photo', 'active', 'awaiting_photo']);
 
   const candidates = blocks ?? [];
   if (candidates.length === 0) {
@@ -314,6 +319,11 @@ async function handleCommand(
     return;
   }
 
+  if (LIST_TASKS_COMMAND.test(cmd)) {
+    await handleListTasks(svc, userId, phone);
+    return;
+  }
+
   if (POSTPONE_COMMAND.test(cmd)) {
     const { data: blocks } = await svc
       .from('blocks')
@@ -368,7 +378,7 @@ async function handleCommand(
 
   await sendWhatsAppText(
     phone,
-    'Comandos: "saldo", "racha", "saltar", "posponer", "¿qué sigue?", "comenzar" — o manda tu foto de evidencia directo.',
+    'Comandos: "saldo", "racha", "saltar", "posponer", "¿qué sigue?", "lista", "comenzar" — o manda tu foto de evidencia directo.',
   );
 }
 
@@ -423,6 +433,49 @@ async function handleWhatsNext(
 
   const summary = await getDaySummaryText(svc, userId, tz);
   await sendWhatsAppText(phone, `No tienes nada pendiente ahora mismo.${summary}`);
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: '⏳ pendiente',
+  awaiting_start_photo: '📷 esperando foto de inicio',
+  active: '▶ en curso',
+  awaiting_photo: '📷 esperando foto de cierre',
+  verified: '✓ verificado',
+  skipped: '✗ saltado',
+};
+
+/**
+ * D-21, §C-13.5f: lista completa de los bloques de hoy en un solo mensaje — a diferencia de
+ * "¿qué sigue?" (un único ítem, el actual/próximo), este comando muestra el día entero para que
+ * el usuario vea de un vistazo qué falta, sin tener que abrir la app.
+ */
+async function handleListTasks(
+  svc: ReturnType<typeof createServiceClient>,
+  userId: string,
+  phone: string,
+): Promise<void> {
+  const { data: profile } = await svc.from('profiles').select('timezone').eq('id', userId).single();
+  const tz = profile?.timezone ?? 'America/Bogota';
+  const today = localDate(new Date(), tz);
+
+  const { data: blocks } = await svc
+    .from('blocks')
+    .select('label, start_time, end_time, status')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .order('start_time', { ascending: true });
+
+  const rows = blocks ?? [];
+  if (rows.length === 0) {
+    await sendWhatsAppText(phone, 'No tienes bloques para hoy todavía. Escribe "comenzar" para que arme tu día.');
+    return;
+  }
+
+  const lines = rows.map((b) => {
+    const label = STATUS_LABEL[b.status] ?? b.status;
+    return `${b.start_time.slice(0, 5)}–${b.end_time.slice(0, 5)} ${b.label} — ${label}`;
+  });
+  await sendWhatsAppText(phone, `Tu día de hoy:\n${lines.join('\n')}`);
 }
 
 /**

@@ -319,3 +319,15 @@ porque `listTasks()` solo miraba la lista `@default`.
 | `updateBlockStatus()` — las transiciones del scheduler ya no fallan en silencio | `apps/flowday/app/internal/scheduler/run/route.ts` |
 | `nextPendingBlock` revisa el error de su propia escritura de estado | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
 | Script de prueba real (Playwright + foto real de `fotospruebas/`) | `apps/flowday/scripts/test-two-phase-real.mjs` (no versionado, como los scripts de prueba anteriores) |
+
+## Fase 16 — WhatsApp: foto de cierre en `active` + comando "lista" (D-20/D-21)
+
+> Reportado por el usuario contra la cuenta real, tras la Fase 15: mandó la foto de cierre y el
+> bot respondió "no tienes ningún bloque esperando foto", pese a que "¿qué sigue?" acababa de
+> mostrar ese mismo bloque como el actual. Diagnóstico confirmado en Supabase: el bloque estaba
+> `active` (no `awaiting_photo`), y `handlePhoto` nunca buscaba en `active`.
+
+| Requisito | Archivo |
+|---|---|
+| D-20: `handlePhoto` acepta la foto de cierre también en `active` (equivalente al botón "Terminar" de la PWA, que WhatsApp no tiene) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
+| D-21: comando "lista"/"listar"/"tareas" — todos los bloques de hoy con su estado en un mensaje | `apps/flowday/app/internal/whatsapp-inbound/route.ts` (`LIST_TASKS_COMMAND`, `handleListTasks`) |

@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.10 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.11 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -27,6 +27,8 @@
 > **Cambios en 2.1.9 (agosto 2026).** El usuario mandó una foto justo después de que "¿qué sigue?" le anunciara la tarea siguiente y la app respondió "no tienes ningún bloque esperando foto" — porque `nextPendingBlock` (D-15) solo ajustaba fechas, nunca transicionaba el bloque fuera de `pending`, y el único mecanismo que sí transiciona (el cron pasivo, `within(startMin)`) exige coincidir con un tick de 5 min que, para un bloque cuyo horario ya pasó o fue reagendado, puede no volver a darse nunca. **D-17** (§C-13.3b): si la ventana efectiva del bloque siguiente ya empezó (por horario original o por la reagenda), `nextPendingBlock` lo arma directamente en `awaiting_start_photo` — listo para recibir la foto de inicio de inmediato — en vez de dejarlo esperando al cron. Si en cambio es genuinamente futuro, se deja en `pending` sin tocar, para no adelantarle el reloj de `PHOTO_WINDOW_MIN`.
 >
 > **Cambios en 2.1.10 (agosto 2026).** Primera prueba real con Playwright contra el flujo de dos fotos (D-10) — no unitaria, contra la cuenta real en producción — expuso dos bugs de infraestructura que ningún test unitario podía atrapar, ambos de *drift* entre lo committeado y lo realmente vivo en Supabase (mismo patrón que el backfill de `106_reorg_cache.sql`, §C-25 nota histórica): **D-18** (§C-7.2): el CHECK constraint `blocks_status_check` en producción nunca incluyó `'awaiting_start_photo'` — cualquier intento de esa transición fallaba en el servidor con 500 (o en silencio, en las llamadas que no revisan el error de la escritura), desde que D-10 introdujo el estado. **D-19** (§C-7.2): el trigger `trg_blocks_touch` (`updated_at` automático) nunca existió en producción — `blocks.updated_at` jamás se actualizaba en ningún UPDATE, rompiendo todo lo que depende de la edad del bloque (auto-skip de `PHOTO_WINDOW_MIN`, recordatorios, "posponer"). Ambos corregidos en vivo vía MCP y respaldados con migraciones `109`/`110`.
+>
+> **Cambios en 2.1.11 (agosto 2026).** Reportado por el usuario contra la cuenta real: mandar la foto de cierre de un bloque `active` (antes de su `end_time`) devolvía "no tienes ningún bloque esperando foto". **D-20** (§C-13.10): `handlePhoto` solo buscaba candidatos en `awaiting_start_photo`/`awaiting_photo` — por WhatsApp no existe el botón "Terminar" de la PWA que hace la transición `active→awaiting_photo` antes de pedir la foto, así que no había ninguna acción que la disparara. Fix: `handlePhoto` también acepta la foto de cierre en `active` (`verifyPhoto()` ya no exigía el paso intermedio). **D-21** (§C-13.5f): nuevo comando `lista`/`listar`/`tareas`/`mis tareas` — muestra todos los bloques de hoy con su estado en un solo mensaje, a diferencia de "¿qué sigue?" que solo muestra el ítem actual/siguiente.
 
 ---
 
@@ -1575,6 +1577,14 @@ El mensaje "eso es todo por hoy" (§C-13.10, al agotarse los bloques `pending`) 
 verificados hoy sobre el total y racha actual — en vez de terminar en seco: refuerzo positivo
 concreto, no solo un "buen trabajo" genérico.
 
+### C-13.5f. Comando "lista": el día completo en un mensaje (D-21) [NORMATIVO]
+
+`lista`/`listar`/`tareas`/`mis tareas`/`lista de tareas`/`enlistar tareas`
+(`LIST_TASKS_COMMAND`): a diferencia de "¿qué sigue?" (§C-13.5d, un único ítem por diseño),
+responde con **todos** los bloques de hoy en un solo mensaje, ordenados por `start_time`, cada
+uno con su estado (⏳ pendiente · 📷 esperando foto de inicio/cierre · ▶ en curso ·
+✓ verificado · ✗ saltado). Solo lectura, no transiciona ningún bloque.
+
 ### C-13.6. Compra de créditos / upgrade de plan
 
 1. Usuario abre pricing (visible solo si flags lo permiten, §C-9.7) o "recargar".
@@ -1611,8 +1621,8 @@ WhatsApp Business Cloud API oficial (Meta) es un **canal adicional opt-in** (AR-
 **Recepción de mensajes.** El workflow n8n `whatsapp-inbound.json` (§C-12.2) usa el nodo WhatsApp Trigger, que maneja el handshake `hub.challenge` y valida la firma `X-Hub-Signature-256` propia de Meta — n8n no decide negocio (AR-3), solo reenvía. El nodo **ya desempaqueta** el sobre `entry[].changes[]` de Meta y manda `change.value` directo (`{messaging_product, metadata, contacts, messages, field}`, un item por `change`), no el sobre completo — el zod schema de la app (`InboundBody`) valida esa forma desempaquetada, no la cruda de Meta. A diferencia del canal original de n8n (§C-12.3, HMAC), este workflow autentica contra la app igual que el resto de `/internal/*` (D-6): credencial nativa `httpHeaderAuth` (`FlowDay Internal Admin`), sin `$env`. La app procesa cada mensaje con `processOnce(message.id, 'whatsapp', ...)` (INV-6, `packages/core/src/events/idempotency.ts`) en `POST /internal/whatsapp-inbound` (§C-11.7).
 
 Con el `wa_id` vinculado a un usuario:
-- **Imagen:** se descarga el media vía Graph API con `WHATSAPP_ACCESS_TOKEN` (`packages/core/src/notifications/whatsapp.ts:fetchWhatsAppMedia`), se sube a `evidence-photos/{user_id}/{block_id}/{ts}.ext` (mismo bucket/convención que la PWA), se resuelve `block_id` como el único bloque del usuario en `awaiting_start_photo` **o** `awaiting_photo` (si hay 0 o >1 candidatos entre ambos estados, se responde pidiendo aclarar en la PWA en vez de adivinar) y se llama `verifyPhoto()` (`apps/flowday/lib/verify-photo.ts`) con la `phase` que corresponda al estado encontrado, sin duplicar lógica — mismo pre-cobro (INV-2), mismo router de IA, misma tabla `evidence`.
-- **Texto:** comandos cortos — `saldo` (balance de créditos), `racha` (streak actual), `saltar` (transiciona el bloque activo/`awaiting_start_photo`/`awaiting_photo` vía `canTransition`, `apps/flowday/lib/blocks/state-machine.ts`); la palabra clave de arranque (ver abajo); cualquier otro texto recibe un mensaje de ayuda corto.
+- **Imagen:** se descarga el media vía Graph API con `WHATSAPP_ACCESS_TOKEN` (`packages/core/src/notifications/whatsapp.ts:fetchWhatsAppMedia`), se sube a `evidence-photos/{user_id}/{block_id}/{ts}.ext` (mismo bucket/convención que la PWA), se resuelve `block_id` como el único bloque del usuario en `awaiting_start_photo`, `active` **o** `awaiting_photo` (si hay 0 o >1 candidatos entre esos estados, se responde pidiendo aclarar en la PWA en vez de adivinar) y se llama `verifyPhoto()` (`apps/flowday/lib/verify-photo.ts`) con la `phase` que corresponda al estado encontrado (`awaiting_start_photo`→`start`; `active`/`awaiting_photo`→`end`), sin duplicar lógica — mismo pre-cobro (INV-2), mismo router de IA, misma tabla `evidence`. **`active` se incluye a propósito (D-20, §C-13.10):** la PWA transiciona `active→awaiting_photo` con el botón "Terminar" *antes* de pedir la foto; WhatsApp no tiene ese botón, así que mandar la foto de cierre mientras el bloque sigue `active` es en sí la señal de "terminé" — `verifyPhoto()` ya escribe `verified` sin exigir el paso intermedio.
+- **Texto:** comandos cortos — `saldo` (balance de créditos), `racha` (streak actual), `saltar` (transiciona el bloque activo/`awaiting_start_photo`/`awaiting_photo` vía `canTransition`, `apps/flowday/lib/blocks/state-machine.ts`), `posponer` (§C-13.5d), `¿qué sigue?` (§C-13.5d), `lista` (todos los bloques de hoy, D-21, §C-13.5f); la palabra clave de arranque (ver abajo); cualquier otro texto recibe un mensaje de ayuda corto.
 
 **Envío de mensajes.** `sendWhatsAppText()` (`packages/core/src/notifications/whatsapp.ts`) solo entrega dentro de la ventana de sesión de 24 h — texto libre, nunca plantillas en esta fase, por lo que no introduce costo nuevo (el único gasto de IA sigue siendo el ya cubierto por AR-9/§C-9). La mayoría de los envíos son respuestas directas a un inbound (dentro de la misma petición). Los avisos del scheduler (§C-13.3/§C-13.5, D-10 — foto de inicio, foto de fin, bloque saltado) son la excepción: los dispara un cron, no un inbound, vía `notifyWhatsAppIfLinked()` (`apps/flowday/lib/notify/whatsapp.ts`), que solo intenta el envío si el usuario tiene `whatsapp_links.phone_e164` vinculado. Como el usuario típicamente ya escribió "comenzar" esa mañana, la ventana suele seguir abierta; si no lo está, Meta rechaza el envío y `sendWhatsAppText` degrada en silencio (el push sigue llegando igual) — nunca se recurre a una plantilla para forzar la entrega.
 
@@ -2318,6 +2328,29 @@ depende de la edad de un bloque —auto-skip de `awaiting_start_photo`, recordat
 llevaba tiempo sin funcionar en producción, silenciosamente, para cualquier bloque. Fix
 (migración `110`, backfill aplicado vía MCP): recrea la función y el trigger tal como estaban
 siempre especificados en `100_blocks.sql`.
+
+### D-20. Por WhatsApp no había forma de "Terminar": la foto de cierre solo se aceptaba en `awaiting_photo` (§C-13.10)
+
+Reportado por el usuario contra la cuenta real: mandó la foto de cierre de un bloque `active`
+antes de su `end_time` y recibió "No tienes ningún bloque esperando foto ahora mismo" — el
+mismo bloque que "¿qué sigue?" acababa de mostrarle como el actual. Causa: `handlePhoto`
+(`whatsapp-inbound/route.ts`) solo buscaba candidatos en `awaiting_start_photo`/`awaiting_photo`.
+En la PWA, el botón "Terminar" hace la transición `active→awaiting_photo` *antes* de pedir la
+foto (`DayBoard.tsx`); por WhatsApp no existe ese botón, así que no había ninguna acción que
+produjera esa transición — solo el scheduler la hace, y solo al llegar `end_time` exacto. Fix:
+`handlePhoto` ahora también busca bloques en `active`; `verifyPhoto()` ya no exigía pasar por
+`awaiting_photo` (escribe `verified` directo sin comprobar el estado previo), así que mandar la
+foto de cierre mientras el bloque sigue `active` **es** la señal de "terminé" — no requiere una
+migración ni un comando nuevo, WhatsApp no tiene botones.
+
+### D-21. Comando "lista": ver todos los bloques del día en un solo mensaje (§C-13.5f)
+
+"¿Qué sigue?" (D-12) solo muestra el ítem actual/siguiente, por diseño (evitar sobrecarga). El
+usuario pidió también poder ver el día completo de un vistazo sin abrir la app. Nuevo comando
+`lista`/`listar`/`tareas`/`mis tareas`/`lista de tareas`/`enlistar tareas`
+(`LIST_TASKS_COMMAND`, `handleListTasks`): responde con todos los bloques de hoy, ordenados por
+hora, cada uno con su estado (⏳ pendiente, 📷 esperando foto de inicio/cierre, ▶ en curso,
+✓ verificado, ✗ saltado). Solo lectura — no cambia ningún estado.
 
 ---
 
