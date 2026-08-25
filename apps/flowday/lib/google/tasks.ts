@@ -1,4 +1,5 @@
 import 'server-only';
+import { logger } from '@flowday/core/observability/logger';
 import { getValidAccessToken } from './tokens';
 
 // Cliente Google Tasks (§C-11.5). Solo IDs/títulos; no se almacena contenido (C-1.3).
@@ -29,7 +30,10 @@ async function listTaskLists(token: string): Promise<RawTaskList[]> {
   const res = await fetch(`${TASKS_API}/users/@me/lists?maxResults=100`, {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    logger.warn({ event: 'google_tasks.list_lists_failed', http_status: res.status, body: (await res.text()).slice(0, 300) });
+    return [];
+  }
   const json = (await res.json()) as { items?: RawTaskList[] };
   return json.items ?? [];
 }
@@ -39,6 +43,7 @@ export async function listTasks(userId: string): Promise<GoogleTask[]> {
   if (!token) return [];
 
   const lists = await listTaskLists(token);
+  logger.info({ event: 'google_tasks.lists_found', count: lists.length, ids: lists.map((l) => l.id).join(',') });
   if (lists.length === 0) return [];
 
   const perList = await Promise.all(
@@ -47,7 +52,10 @@ export async function listTasks(userId: string): Promise<GoogleTask[]> {
         `${TASKS_API}/lists/${encodeURIComponent(list.id)}/tasks?showCompleted=false&maxResults=100`,
         { headers: { authorization: `Bearer ${token}` } },
       );
-      if (!res.ok) return [];
+      if (!res.ok) {
+        logger.warn({ event: 'google_tasks.list_tasks_failed', http_status: res.status, body: (await res.text()).slice(0, 300) });
+        return [];
+      }
       const json = (await res.json()) as { items?: RawTask[] };
       return (json.items ?? []).map((t) => ({
         id: `${list.id}:${t.id}`,
@@ -58,7 +66,9 @@ export async function listTasks(userId: string): Promise<GoogleTask[]> {
     }),
   );
 
-  return perList.flat();
+  const flat = perList.flat();
+  logger.info({ event: 'google_tasks.tasks_found', count: flat.length });
+  return flat;
 }
 
 export async function completeTask(userId: string, compositeId: string): Promise<boolean> {
