@@ -98,3 +98,9 @@ export function localDayRangeUtc(dateStr: string, timeZone: string): { start: Da
   const end = new Date(start.getTime() + 24 * 3600 * 1000);
   return { start, end };
 }
+
+/** Instante UTC exacto de 'YYYY-MM-DD' + 'HH:MM' local en una tz (D-26, §C-26.7c). */
+export function localDateTimeToUtc(dateStr: string, hhmm: string, timeZone: string): Date {
+  const { start } = localDayRangeUtc(dateStr, timeZone);
+  return new Date(start.getTime() + timeToMinutes(hhmm) * 60000);
+}

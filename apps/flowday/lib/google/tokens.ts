@@ -6,7 +6,12 @@ import { createServiceClient } from '@/lib/supabase/service';
 // Persistencia y refresco de credenciales Google (offline). Tokens cifrados (§Fase 2 D).
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks';
-export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+// D-26, §C-26.7c: antes 'calendar.readonly'. auto_organize_tasks necesita crear/editar eventos
+// reales — 'calendar.events' es el scope mínimo de Google para eso (no da permiso para borrar
+// o administrar calendarios enteros, a diferencia del scope 'calendar' completo). Un usuario ya
+// conectado con el scope viejo (solo lectura) debe reconectar para que Google le pida este
+// permiso nuevo — `prompt=consent` en /api/v1/google/connect ya fuerza esa pantalla.
+export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 // Tasks (Pro+ Calendar): se piden ambos scopes en el connect; Calendar se gatea por plan.
 export const GOOGLE_SCOPES = `${GOOGLE_TASKS_SCOPE} ${GOOGLE_CALENDAR_SCOPE}`;
 

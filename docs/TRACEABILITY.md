@@ -360,3 +360,21 @@ porque `listTasks()` solo miraba la lista `@default`.
 | `PATCH /api/v1/profile` acepta `max_daily_tasks` | `apps/flowday/app/api/v1/profile/route.ts` |
 | `computePlan` corta las tareas elegibles (ordenadas por `due` ascendente) al tope antes de la IA y de nuevo sobre el resultado; el tope entra al `source_hash` de `reorg_cache` | `apps/flowday/lib/planning/daily-plan.ts` |
 | Control numérico en Ajustes | `apps/flowday/components/SettingsClient.tsx`, `apps/flowday/app/(auth)/settings/page.tsx` |
+
+## Fase 19 — Organización proactiva: tareas sin fecha + eventos reales en Google Calendar (D-26)
+
+> Pedido explícito del usuario: lo que D-13 (2.1.5) excluyó a propósito ("deliberadamente NO
+> incluye escribir eventos en Google Calendar") ahora sí se construye, confirmado por el usuario
+> incluyendo el costo de tener que reconectar Google para el permiso de escritura nuevo.
+
+| Requisito | Archivo |
+|---|---|
+| `profiles.auto_organize_tasks` (opt-in, default false) | `packages/db/migrations/016_auto_organize_tasks.sql` |
+| `blocks.calendar_event_id` (evita duplicar eventos en replanificaciones) | `apps/flowday/db/migrations/111_blocks_calendar_event_id.sql` |
+| Tipos generados (`profiles.auto_organize_tasks`, `blocks.calendar_event_id`) | `packages/core/src/supabase/types.ts` |
+| `GOOGLE_CALENDAR_SCOPE` pasa de `calendar.readonly` a `calendar.events` | `apps/flowday/lib/google/tokens.ts` |
+| `createEvent`/`updateEvent` contra Calendar real | `apps/flowday/lib/google/calendar.ts` |
+| `localDateTimeToUtc` (fecha+hora local → instante UTC exacto) | `apps/flowday/lib/datetime.ts`, `apps/flowday/lib/datetime.test.ts` |
+| `computePlan` incluye tareas sin `due` cuando el flag está activo + crea eventos de Calendar (`createCalendarEventsForBlocks`) | `apps/flowday/lib/planning/daily-plan.ts` |
+| `PATCH /api/v1/profile` acepta `auto_organize_tasks` | `apps/flowday/app/api/v1/profile/route.ts` |
+| Checkbox + aviso de reconexión cuando falta el scope | `apps/flowday/components/SettingsClient.tsx`, `apps/flowday/app/(auth)/settings/page.tsx` |

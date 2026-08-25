@@ -20,6 +20,8 @@ interface SettingsClientProps {
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
   maxDailyTasks: number;
+  autoOrganizeTasks: boolean;
+  hasCalendarWriteScope: boolean;
 }
 
 export function SettingsClient({
@@ -29,6 +31,8 @@ export function SettingsClient({
   quietHoursStart,
   quietHoursEnd,
   maxDailyTasks,
+  autoOrganizeTasks,
+  hasCalendarWriteScope,
 }: SettingsClientProps) {
   const { status, subscribe } = usePush();
   const [waCode, setWaCode] = useState<string | null>(null);
@@ -103,6 +107,31 @@ export function SettingsClient({
       if (e instanceof ApiError) setMaxTasksError(e.message);
     } finally {
       setMaxTasksBusy(false);
+    }
+  }
+
+  // D-26, §C-26.7c: organización proactiva — tareas sin fecha entran al planificador y cada
+  // una se crea como evento real en Google Calendar (requiere haber reconectado Google con el
+  // permiso de escritura nuevo).
+  const [autoOrganize, setAutoOrganize] = useState(autoOrganizeTasks);
+  const [autoOrganizeBusy, setAutoOrganizeBusy] = useState(false);
+  const [autoOrganizeError, setAutoOrganizeError] = useState<string | null>(null);
+
+  async function toggleAutoOrganize(next: boolean) {
+    setAutoOrganizeError(null);
+    setAutoOrganizeBusy(true);
+    const previous = autoOrganize;
+    setAutoOrganize(next);
+    try {
+      await apiFetch('/api/v1/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ auto_organize_tasks: next }),
+      });
+    } catch (e) {
+      setAutoOrganize(previous);
+      if (e instanceof ApiError) setAutoOrganizeError(e.message);
+    } finally {
+      setAutoOrganizeBusy(false);
     }
   }
 
@@ -220,6 +249,36 @@ export function SettingsClient({
           className="w-20 rounded-lg border border-neutral-300 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
         />
         {maxTasksError ? <p className="mt-1 text-sm text-red-600">{maxTasksError}</p> : null}
+      </div>
+
+      <div className="pt-4">
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={autoOrganize}
+            disabled={autoOrganizeBusy}
+            onChange={(e) => void toggleAutoOrganize(e.target.checked)}
+            className="mt-1 h-5 w-5"
+          />
+          <span>
+            <span className="block font-medium">Organización proactiva</span>
+            <span className="block text-sm text-neutral-600">
+              Cuando está activa, tus tareas sin fecha en Google Tasks también se organizan en
+              los huecos libres de tu Calendar (respetando el máximo de arriba), y cada una se
+              crea como evento real en tu Google Calendar.
+            </span>
+          </span>
+        </label>
+        {autoOrganize && !hasCalendarWriteScope ? (
+          <p className="mt-2 text-sm text-amber-600">
+            Tu conexión con Google todavía no tiene permiso para crear eventos en tu Calendar —
+            los eventos no se van a crear hasta que reconectes.{' '}
+            <a href="/api/v1/google/connect" className="underline">
+              Reconectar Google
+            </a>
+          </p>
+        ) : null}
+        {autoOrganizeError ? <p className="mt-1 text-sm text-red-600">{autoOrganizeError}</p> : null}
       </div>
 
       <div className="pt-4">

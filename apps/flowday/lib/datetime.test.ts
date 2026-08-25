@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { timeToMinutes, minutesToHHMM, localDate, localTimeHHMM, localDayRangeUtc, timeGreeting } from './datetime';
+import {
+  timeToMinutes,
+  minutesToHHMM,
+  localDate,
+  localTimeHHMM,
+  localDayRangeUtc,
+  localDateTimeToUtc,
+  timeGreeting,
+} from './datetime';
 
 // SPEC §C-12.5, INV-12.
 describe('datetime', () => {
@@ -43,5 +51,13 @@ describe('datetime', () => {
     expect(localDate(new Date(start.getTime() - 1), 'America/Bogota')).toBe('2026-06-12');
     // Un instante justo dentro cae en el día pedido.
     expect(localDate(start, 'America/Bogota')).toBe('2026-06-13');
+  });
+
+  it('localDateTimeToUtc combina fecha+hora local en el instante UTC exacto (D-26)', () => {
+    // 09:05 en Bogotá (UTC-5) es 14:05 UTC.
+    expect(localDateTimeToUtc('2026-06-13', '09:05', 'America/Bogota').toISOString()).toBe(
+      '2026-06-13T14:05:00.000Z',
+    );
+    expect(localDateTimeToUtc('2026-06-13', '00:00', 'UTC').toISOString()).toBe('2026-06-13T00:00:00.000Z');
   });
 });

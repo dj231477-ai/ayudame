@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.13 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.14 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -33,6 +33,8 @@
 > **Cambios en 2.1.12 (agosto 2026).** El usuario pidió que las tareas de hoy tuvieran fecha/hora asignada según los huecos libres de su Calendar. Investigando por qué el plan diario nunca traía ninguna tarea (solo eventos de Calendar), se encontró **D-22** (§C-26): la Google Tasks API nunca se había habilitado en el proyecto de Google Cloud del OAuth client — `listTasks()` llevaba devolviendo `[]` en silencio desde siempre (mismo patrón de degradación silenciosa que D-18/D-19), pese a que el scope sí estaba concedido. Corregido por el usuario habilitando la API; se deja logging permanente para que una falla así nunca vuelva a pasar inadvertida. Con `listTasks()` ya funcionando, dos ajustes más (§C-26.7): **D-23**, `computePlan` ahora solo ofrece a la IA las tareas con `due <= hoy` (vencidas o que vencen hoy) en vez de todo el backlog de todas las listas del usuario (40+ tareas reales, la mayoría sin relación con hoy); **D-24**, cada tarea que la IA encaja hoy recibe `due = hoy` de vuelta en Google Tasks (`scheduleTask`) — verificado contra la documentación oficial y contra la cuenta real que la API de Google Tasks **solo admite fecha, nunca hora**, en el campo `due` (límite de Google, no de FlowDay); la hora exacta sigue viviendo solo en `blocks`/WhatsApp.
 >
 > **Cambios en 2.1.13 (agosto 2026).** El usuario preguntó qué pasa con sus tareas sin fecha (D-23 las deja fuera del encaje) y pidió control directo en vez de que FlowDay decidiera una política fija: **D-25** (§C-26.7b), nuevo `profiles.max_daily_tasks` (default 5, migración `015_max_daily_tasks.sql`) editable desde Ajustes — el planificador nunca encaja más de ese número de tareas en un mismo día, sin importar cuántas estén elegibles (ordenadas por `due` ascendente, se corta al tope antes de ofrecerlas a la IA y de nuevo sobre el resultado). El tope entra al `source_hash` de `reorg_cache` (§C-26.3), así que cambiarlo fuerza recalcular el día.
+>
+> **Cambios en 2.1.14 (agosto 2026).** El usuario pidió explícitamente lo que D-13 (2.1.5) había excluido a propósito: escribir eventos reales en Google Calendar. **D-26** (§C-26.7c): nuevo interruptor `profiles.auto_organize_tasks` (opt-in, default false, migración `016_auto_organize_tasks.sql`) — activo, hace que (1) las tareas sin `due` de Google Tasks también entren al encaje del planificador (respetando el tope de D-25) y (2) cada tarea encajada se cree como evento real en el Calendar primario del usuario (`createEvent`, `apps/flowday/lib/google/calendar.ts`), guardando su id en la nueva columna `blocks.calendar_event_id` (migración `111_blocks_calendar_event_id.sql`) para no duplicar en replanificaciones. Requiere el scope `calendar.events` (antes `calendar.readonly`, `GOOGLE_CALENDAR_SCOPE`) — una cuenta conectada antes de este cambio debe reconectar Google; Ajustes avisa con un enlace cuando el interruptor está activo pero falta el scope. Limitación conocida: el catch-up (D-15) no reagenda el evento de Calendar ya creado si mueve el bloque después. Apagar el interruptor no borra los eventos ya creados.
 
 ---
 
@@ -2405,6 +2407,22 @@ por `due` ascendente y corta al tope antes de ofrecérselas a la IA, con el mism
 de nuevo sobre el resultado como defensa en profundidad. El tope entra al `source_hash` de
 `reorg_cache` para que cambiarlo invalide la cache del día.
 
+### D-26. Organización proactiva: tareas sin fecha + eventos reales en Google Calendar (§C-26.7c)
+
+Pedido explícito del usuario, tras la pregunta de D-25 sobre tareas sin fecha: "necesito que
+coloques una opción en ajustes que cuando esté activa le ponga fechas a todas las tareas sin
+fecha y las organice en el Google Calendar de manera proactiva y automática." Distinto de D-13
+(que deliberadamente excluyó escribir en Calendar, 2.1.5): el usuario confirmó explícitamente
+que esta vez sí quiere escritura real en Calendar, incluyendo aceptar tener que reconectar
+Google para el permiso nuevo. Nuevo `profiles.auto_organize_tasks` (opt-in, default false,
+migración `016_auto_organize_tasks.sql`): activa (1) que las tareas sin `due` entren al encaje
+del planificador y (2) que cada tarea encajada se cree como evento real en el Calendar del
+usuario (`createEvent`, `GOOGLE_CALENDAR_SCOPE` pasa de `calendar.readonly` a
+`calendar.events`). Nueva columna `blocks.calendar_event_id` (migración
+`111_blocks_calendar_event_id.sql`) para no duplicar eventos en replanificaciones. Ajustes
+muestra un aviso de reconexión cuando el interruptor está activo pero la cuenta todavía tiene
+el scope viejo de solo-lectura.
+
 ---
 
 ## C-26. Auto-organización de Calendar/Tasks (Pro+)
@@ -2502,6 +2520,48 @@ al mismo tope como defensa en profundidad. `max_daily_tasks` entra al `source_ha
 `reorg_cache` (§C-26.3): cambiar el tope invalida la cache del día y fuerza recalcular. Un
 usuario con 40 tareas vencidas y `max_daily_tasks=5` nunca ve más de 5 asignadas ese día — las
 demás quedan en su backlog, elegibles de nuevo mañana.
+
+### C-26.7c. Organización proactiva: tareas sin fecha + escritura real en Google Calendar (D-26) [NORMATIVO]
+
+Interruptor `profiles.auto_organize_tasks` (`boolean not null default false`, migración
+`packages/db/migrations/016_auto_organize_tasks.sql`), editable desde Ajustes
+(`PATCH /api/v1/profile`, checkbox en `SettingsClient.tsx`). **Desactivado por defecto** —
+cambia comportamiento real (toca el Calendar real del usuario), nunca se activa solo.
+
+Cuando está **activo**, dos efectos en `computePlan` (`apps/flowday/lib/planning/daily-plan.ts`):
+
+1. **Tareas sin `due` también son elegibles** (además de vencidas/de hoy, §C-26.7): se ordenan
+   con las vencidas/de hoy primero (por `due` ascendente) y las sin fecha al final, y se cortan
+   al mismo `max_daily_tasks` (§C-26.7b) — el tope aplica igual, sea cual sea el origen.
+2. **Cada bloque encajado a partir de una tarea se crea como evento real** en el calendario
+   primario de Google del usuario (`createEvent`, `apps/flowday/lib/google/calendar.ts`), best-
+   effort — un fallo nunca bloquea la planificación, el bloque se crea igual en FlowDay solo sin
+   `calendar_event_id` (columna nueva en `blocks`, migración
+   `apps/flowday/db/migrations/111_blocks_calendar_event_id.sql`). Se registra
+   `daily_plan.calendar_event_failed` si falla, para no repetir el patrón de degradación
+   silenciosa de D-18/D-19/D-22.
+
+**Scope de Google requerido:** crear/editar eventos exige el scope
+`https://www.googleapis.com/auth/calendar.events` — reemplaza al `calendar.readonly` que se
+pedía hasta D-26 (`GOOGLE_CALENDAR_SCOPE`, `apps/flowday/lib/google/tokens.ts`; confirmado
+contra la documentación oficial de Google que `calendar.events` incluye lectura, no reduce nada
+del comportamiento existente). Un usuario que conectó Google **antes** de D-26 solo tiene el
+scope viejo de solo-lectura y debe reconectar (`/api/v1/google/connect`, que ya fuerza
+`prompt=consent`) para que Google le pida el permiso nuevo — Ajustes muestra un aviso con enlace
+de reconexión cuando el interruptor está activo pero el scope guardado no incluye
+`calendar.events`.
+
+`auto_organize_tasks` entra al `source_hash` de `reorg_cache` (§C-26.3): activarlo/desactivarlo
+invalida la cache del día y fuerza recalcular.
+
+**Limitación conocida, deliberada:** si el catch-up (D-15, §C-13.3b) reagenda un bloque ya
+materializado a una hora distinta, el evento de Calendar ya creado **no se actualiza** — queda
+con su hora original. Sincronizar ambos sentidos ante cualquier reagenda es alcance futuro, no
+de esta entrega; el usuario puede editar el evento a mano en Calendar si eso pasa.
+
+**Al desactivar el interruptor:** los eventos ya creados en el Calendar real del usuario **no
+se borran automáticamente** — apagar la opción solo detiene la creación de nuevos, nunca toca
+lo que ya existe en el calendario real de alguien sin que lo pida explícitamente.
 
 ---
 

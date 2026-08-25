@@ -43,6 +43,7 @@ export type Database = {
       }
       blocks: {
         Row: {
+          calendar_event_id: string | null
           created_at: string
           date: string
           end_time: string
@@ -56,6 +57,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          calendar_event_id?: string | null
           created_at?: string
           date: string
           end_time: string
@@ -69,6 +71,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          calendar_event_id?: string | null
           created_at?: string
           date?: string
           end_time?: string
@@ -425,6 +428,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          auto_organize_tasks: boolean
           created_at: string
           frequent_reminders: boolean
           full_name: string | null
@@ -440,6 +444,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          auto_organize_tasks?: boolean
           created_at?: string
           frequent_reminders?: boolean
           full_name?: string | null
@@ -455,6 +460,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          auto_organize_tasks?: boolean
           created_at?: string
           frequent_reminders?: boolean
           full_name?: string | null

@@ -4,8 +4,8 @@ import { callAI } from '@flowday/core/ai/router';
 import { logger } from '@flowday/core/observability/logger';
 import type { BlockType, Json } from '@flowday/core/supabase/types';
 import { createServiceClient } from '@/lib/supabase/service';
-import { localDayRangeUtc, localTimeHHMM } from '@/lib/datetime';
-import { listUpcomingEvents } from '@/lib/google/calendar';
+import { localDayRangeUtc, localTimeHHMM, localDateTimeToUtc } from '@/lib/datetime';
+import { listUpcomingEvents, createEvent } from '@/lib/google/calendar';
 import { listTasks, scheduleTask } from '@/lib/google/tasks';
 import { buildPlanPrompt, parsePlanResponse, hasRoomToday, type FixedBlockInput } from './plan-prompt';
 
@@ -24,6 +24,7 @@ export interface DailyPlanBlock {
   end_time: string;
   type: BlockType;
   task_id?: string;
+  calendar_event_id?: string; // D-26, §C-26.7c: solo si auto_organize_tasks está activo
 }
 
 /**
@@ -37,6 +38,7 @@ function computeSourceHash(input: {
   dateStr: string;
   tz: string;
   maxDailyTasks: number;
+  autoOrganize: boolean;
   events: { id: string; summary: string; start: string | null; end: string | null }[];
   tasks: { id: string; title: string; status: string; due?: string }[];
 }): string {
@@ -44,6 +46,7 @@ function computeSourceHash(input: {
     date: input.dateStr,
     tz: input.tz,
     max_daily_tasks: input.maxDailyTasks,
+    auto_organize_tasks: input.autoOrganize,
     events: [...input.events]
       .map((e) => ({ id: e.id, s: e.summary, start: e.start, end: e.end }))
       .sort((a, b) => a.id.localeCompare(b.id)),
@@ -62,9 +65,14 @@ function computeSourceHash(input: {
 export async function getOrComputeDailyPlan(userId: string, dateStr: string): Promise<DailyPlanBlock[]> {
   const svc = createServiceClient();
 
-  const { data: profile } = await svc.from('profiles').select('timezone, max_daily_tasks').eq('id', userId).single();
+  const { data: profile } = await svc
+    .from('profiles')
+    .select('timezone, max_daily_tasks, auto_organize_tasks')
+    .eq('id', userId)
+    .single();
   const tz = profile?.timezone ?? 'America/Bogota';
   const maxDailyTasks = profile?.max_daily_tasks ?? 5;
+  const autoOrganize = profile?.auto_organize_tasks ?? false;
   const { start, end } = localDayRangeUtc(dateStr, tz);
 
   let events: Awaited<ReturnType<typeof listUpcomingEvents>> = [];
@@ -88,7 +96,7 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
     .eq('date', dateStr);
   const existingBlocks = existing ?? [];
 
-  const sourceHash = computeSourceHash({ dateStr, tz, maxDailyTasks, events, tasks });
+  const sourceHash = computeSourceHash({ dateStr, tz, maxDailyTasks, autoOrganize, events, tasks });
 
   const { data: cached } = await svc
     .from('reorg_cache')
@@ -101,7 +109,7 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
   if (cached && cached.source_hash === sourceHash) {
     plan = cached.plan as unknown as DailyPlanBlock[];
   } else {
-    plan = await computePlan(userId, dateStr, tz, maxDailyTasks, events, tasks);
+    plan = await computePlan(userId, dateStr, tz, maxDailyTasks, autoOrganize, events, tasks);
     await svc.from('reorg_cache').upsert({
       user_id: userId,
       date: dateStr,
@@ -126,6 +134,7 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
       label: p.label,
       type: p.type,
       task_id: p.task_id ?? null,
+      calendar_event_id: p.calendar_event_id ?? null,
     }));
   if (toInsert.length > 0) {
     await svc.from('blocks').insert(toInsert);
@@ -141,6 +150,7 @@ async function computePlan(
   dateStr: string,
   tz: string,
   maxDailyTasks: number,
+  autoOrganize: boolean,
   events: Awaited<ReturnType<typeof listUpcomingEvents>>,
   tasks: Awaited<ReturnType<typeof listTasks>>,
 ): Promise<DailyPlanBlock[]> {
@@ -159,13 +169,20 @@ async function computePlan(
   // backlog de todas las listas (un usuario real puede tener decenas sin relación con hoy).
   // `due` de Google Tasks solo trae fecha (siempre medianoche UTC, confirmado D-24): comparar
   // el prefijo de fecha evita cualquier desfase de zona horaria al convertir con `Date`.
+  // D-26, §C-26.7c: si `auto_organize_tasks` está activo, las tareas SIN `due` también entran
+  // (backlog sin fecha) — nunca por defecto, es un opt-in explícito.
   // D-25, §C-26.7b: tope configurable por el usuario (`profiles.max_daily_tasks`) — nunca se
-  // encajan más de N tareas en un día sin importar cuántas estén elegibles. Se ordena por `due`
-  // ascendente (lo más vencido primero) antes de cortar, para que el tope se lo lleve lo más
-  // urgente si sobran candidatas.
+  // encajan más de N tareas en un día sin importar cuántas estén elegibles. Se ordena con las
+  // vencidas/de hoy primero (por `due` ascendente) y las sin fecha al final, para que el tope
+  // se lo lleve lo más urgente si sobran candidatas.
+  const NO_DUE_SORT_KEY = '9999-99-99';
   const pendingTasks = tasks
-    .filter((t) => t.status !== 'completed' && !!t.due && t.due.slice(0, 10) <= dateStr)
-    .sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))
+    .filter((t) => {
+      if (t.status === 'completed') return false;
+      if (t.due) return t.due.slice(0, 10) <= dateStr;
+      return autoOrganize;
+    })
+    .sort((a, b) => (a.due?.slice(0, 10) ?? NO_DUE_SORT_KEY).localeCompare(b.due?.slice(0, 10) ?? NO_DUE_SORT_KEY))
     .slice(0, maxDailyTasks);
   const nowHHMM = localTimeHHMM(new Date(), tz);
   if (pendingTasks.length === 0 || !hasRoomToday(nowHHMM)) {
@@ -189,7 +206,7 @@ async function computePlan(
     const planned = parsePlanResponse(ai.text, nowHHMM);
     // D-25: defensa en profundidad — pendingTasks ya viene acotado a maxDailyTasks, pero si el
     // modelo no siguiera la instrucción y devolviera más, el tope se aplica igual aquí.
-    const aiBlocks: DailyPlanBlock[] = planned.slice(0, maxDailyTasks).map((p) => ({
+    let aiBlocks: DailyPlanBlock[] = planned.slice(0, maxDailyTasks).map((p) => ({
       label: p.label,
       start_time: p.start_time,
       end_time: p.end_time,
@@ -197,6 +214,7 @@ async function computePlan(
       task_id: p.task_id,
     }));
     await scheduleTasksToday(userId, dateStr, aiBlocks);
+    if (autoOrganize) aiBlocks = await createCalendarEventsForBlocks(userId, dateStr, tz, aiBlocks);
     return [...fixed, ...aiBlocks].sort((a, b) => a.start_time.localeCompare(b.start_time));
   } catch {
     // Degradación explícita (§C-14.3): sin IA disponible, se sirve solo lo determinista.
@@ -222,5 +240,39 @@ async function scheduleTasksToday(userId: string, dateStr: string, aiBlocks: Dai
           logger.warn({ event: 'daily_plan.schedule_task_failed', user_id: userId, task_id: b.task_id });
         }
       }),
+  );
+}
+
+/**
+ * D-26, §C-26.7c: crea el evento real en el Google Calendar del usuario para cada bloque que la
+ * IA encajó a partir de una tarea, solo cuando `auto_organize_tasks` está activo. Best-effort:
+ * un fallo (por ejemplo, el usuario no ha reconectado Google con el scope de escritura) nunca
+ * bloquea la planificación — el bloque se crea igual en FlowDay, solo sin `calendar_event_id`.
+ * NOTA: no reagenda el evento si el catch-up (D-15) mueve el bloque después — limitación
+ * conocida, documentada en el SPEC.
+ */
+async function createCalendarEventsForBlocks(
+  userId: string,
+  dateStr: string,
+  tz: string,
+  aiBlocks: DailyPlanBlock[],
+): Promise<DailyPlanBlock[]> {
+  return Promise.all(
+    aiBlocks.map(async (b) => {
+      if (!b.task_id) return b;
+      try {
+        const startIso = localDateTimeToUtc(dateStr, b.start_time, tz).toISOString();
+        const endIso = localDateTimeToUtc(dateStr, b.end_time, tz).toISOString();
+        const eventId = await createEvent(userId, { summary: b.label, startIso, endIso, timeZone: tz });
+        if (!eventId) {
+          logger.warn({ event: 'daily_plan.calendar_event_failed', user_id: userId, task_id: b.task_id });
+          return b;
+        }
+        return { ...b, calendar_event_id: eventId };
+      } catch {
+        logger.warn({ event: 'daily_plan.calendar_event_failed', user_id: userId, task_id: b.task_id });
+        return b;
+      }
+    }),
   );
 }
