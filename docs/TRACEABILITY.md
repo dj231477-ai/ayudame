@@ -378,3 +378,17 @@ porque `listTasks()` solo miraba la lista `@default`.
 | `computePlan` incluye tareas sin `due` cuando el flag está activo + crea eventos de Calendar (`createCalendarEventsForBlocks`) | `apps/flowday/lib/planning/daily-plan.ts` |
 | `PATCH /api/v1/profile` acepta `auto_organize_tasks` | `apps/flowday/app/api/v1/profile/route.ts` |
 | Checkbox + aviso de reconexión cuando falta el scope | `apps/flowday/components/SettingsClient.tsx`, `apps/flowday/app/(auth)/settings/page.tsx` |
+
+## Fase 20 — Modelos de texto Groq/Cerebras descontinuados: `daily_briefing` degradaba en silencio (D-27)
+
+> "no me está dando otra actividad" — reportado con hueco libre real y 101 tareas pendientes.
+> Confirmado en vivo (`GET /v1/models` contra cada cuenta, curl directo con las API keys reales)
+> que ambos modelos de texto configurados ya no existen: 404 `model_not_found` en los dos.
+> Nunca se había detectado porque `daily_briefing` no tenía tareas reales que ofrecer hasta
+> D-22. Cerebras además está con 402 `payment_required` — fuera de alcance de un fix de código.
+
+| Requisito | Archivo |
+|---|---|
+| Modelos actualizados (`openai/gpt-oss-20b`, `gemma-4-31b`) | `packages/core/src/ai/router.ts` |
+| `reasoningEffort` en `openAICompatibleChat` (modelos GPT-OSS gastan `max_tokens` razonando) + error con cuerpo de respuesta, no solo status | `packages/core/src/ai/providers/shared.ts` |
+| Groq pasa `reasoningEffort: 'low'` siempre | `packages/core/src/ai/providers/groq.ts` |

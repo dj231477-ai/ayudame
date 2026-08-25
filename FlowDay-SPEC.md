@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.14 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.15 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -35,6 +35,8 @@
 > **Cambios en 2.1.13 (agosto 2026).** El usuario preguntó qué pasa con sus tareas sin fecha (D-23 las deja fuera del encaje) y pidió control directo en vez de que FlowDay decidiera una política fija: **D-25** (§C-26.7b), nuevo `profiles.max_daily_tasks` (default 5, migración `015_max_daily_tasks.sql`) editable desde Ajustes — el planificador nunca encaja más de ese número de tareas en un mismo día, sin importar cuántas estén elegibles (ordenadas por `due` ascendente, se corta al tope antes de ofrecerlas a la IA y de nuevo sobre el resultado). El tope entra al `source_hash` de `reorg_cache` (§C-26.3), así que cambiarlo fuerza recalcular el día.
 >
 > **Cambios en 2.1.14 (agosto 2026).** El usuario pidió explícitamente lo que D-13 (2.1.5) había excluido a propósito: escribir eventos reales en Google Calendar. **D-26** (§C-26.7c): nuevo interruptor `profiles.auto_organize_tasks` (opt-in, default false, migración `016_auto_organize_tasks.sql`) — activo, hace que (1) las tareas sin `due` de Google Tasks también entren al encaje del planificador (respetando el tope de D-25) y (2) cada tarea encajada se cree como evento real en el Calendar primario del usuario (`createEvent`, `apps/flowday/lib/google/calendar.ts`), guardando su id en la nueva columna `blocks.calendar_event_id` (migración `111_blocks_calendar_event_id.sql`) para no duplicar en replanificaciones. Requiere el scope `calendar.events` (antes `calendar.readonly`, `GOOGLE_CALENDAR_SCOPE`) — una cuenta conectada antes de este cambio debe reconectar Google; Ajustes avisa con un enlace cuando el interruptor está activo pero falta el scope. Limitación conocida: el catch-up (D-15) no reagenda el evento de Calendar ya creado si mueve el bloque después. Apagar el interruptor no borra los eventos ya creados.
+>
+> **Cambios en 2.1.15 (agosto 2026).** Reportado por el usuario contra la cuenta real: "no me está dando otra actividad" — mandó "comenzar" con un hueco libre de 49 min antes de su próximo evento fijo y 101 tareas reales pendientes, y no le propuso nada. **D-27** (§C-10.6): confirmado en vivo que ni `llama-3.3-70b-versatile` (Groq) ni `llama3.1-70b` (Cerebras) existen ya en las cuentas reales — ambos 404 `model_not_found`, nunca antes ejercitado porque D-22 (Google Tasks) es lo que hizo que `daily_briefing` por fin tuviera tareas reales que ofrecerle a la IA. `computePlan` degradaba en silencio a "solo lo determinista" cada vez. Modelos actualizados a los vigentes (`openai/gpt-oss-20b` / `gemma-4-31b`); los modelos GPT-OSS son de razonamiento y necesitan `reasoning_effort:'low'` para no vaciar `content` con `max_tokens` normal — nuevo parámetro en `openAICompatibleChat`. El error de un HTTP no-ok ahora incluye el cuerpo de la respuesta, no solo el status. Cerebras además tiene la cuenta con 402 `payment_required` — pendiente de que el usuario reactive el billing, no corregible por código.
 
 ---
 
@@ -1103,10 +1105,10 @@ export async function getAIProvider(modality: AIModality): Promise<AIProvider> {
   // Texto: rotación por cuota diaria (sin ruta especial para el fundador — Ollama, que la
   // servía, quedó descartado por latencia, D-9).
   if ((await getDailyUsage('groq')) < TEXT_GROQ_LIMIT) {
-    return { provider: 'groq', model: 'llama-3.3-70b-versatile' };
+    return { provider: 'groq', model: 'openai/gpt-oss-20b' }; // D-27: modelo Llama descontinuado en la cuenta real
   }
   if ((await getDailyUsage('cerebras')) < TEXT_CEREBRAS_TOKEN_LIMIT) {
-    return { provider: 'cerebras', model: 'llama3.1-70b' };
+    return { provider: 'cerebras', model: 'gemma-4-31b' }; // D-27: ídem
   }
   // Groq y Cerebras agotados el mismo día: sin Ollama no queda alternativa gratuita (D-9).
   if (await isFlagEnabled(PAID_FALLBACK_FLAG)) {
@@ -1179,13 +1181,34 @@ El `VERIFY_PROMPT` (§C-13.4) recibe el nombre de tarea como `userData`, nunca i
 | Proveedor | Modalidad | Modelo | Cuota free (referencia) | Rol |
 |-----------|-----------|--------|--------------------------|-----|
 | Gemini | visión | gemini-3.6-flash | ~1.500 req/día | Visión primaria |
-| Groq | texto | llama-3.3-70b-versatile | ~1.000 req/día | Texto primario |
-| Cerebras | texto | llama3.1-70b | ~1M tokens/día | Overflow texto |
+| Groq | texto | openai/gpt-oss-20b (D-27) | ~1.000 req/día | Texto primario |
+| Cerebras | texto | gemma-4-31b (D-27) | ~1M tokens/día | Overflow texto — **cuenta con 402 payment_required al confirmar D-27**, pendiente de que el usuario reactive el billing |
 | MiniMax | visión + texto | MiniMax-M3 | de pago | Fallback de pago (tras 50 usuarios, mismo flag; D-2 visión / D-9 texto) |
 
 La columna "Modalidad" describe el **uso real en producción**, no las capacidades del modelo. Nota técnica: `gemini-3.6-flash` soporta también texto, pero el router (§C-10.3) lo invoca **únicamente para visión** (verificación de fotos); el texto se enruta a Groq/Cerebras/MiniMax. Ollama (respaldo de texto, incluida una ruta especial para el fundador) se **descartó por completo** (D-9): 8–12 tok/s en CPU es inaceptable incluso como *best-effort*.
 
 Las cuotas reales se confirman contra cada proveedor; los umbrales del router (§C-10.3) se mantienen por debajo del límite para dejar margen de seguridad.
+
+**D-27 (agosto 2026), NORMATIVO.** Primera vez que `daily_briefing` (§C-26.1) tuvo tareas
+reales que ofrecer a la IA (tras D-22, con Google Tasks ya habilitado) expuso que **ninguno de
+los dos modelos de texto configurados existía ya en la cuenta real** — `llama-3.3-70b-versatile`
+(Groq) y `llama3.1-70b` (Cerebras) devolvían 404 `model_not_found`, confirmado en vivo contra
+cada API (`GET /v1/models` de cada cuenta). Groq eliminó la familia Llama de esta cuenta; los
+modelos vigentes son `openai/gpt-oss-20b`/`120b`, `groq/compound(-mini)` y `qwen/qwen3.6-27b`.
+Cerebras solo ofrece `gemma-4-31b` y `gpt-oss-120b`, y además su cuenta devuelve 402
+`payment_required` en ambos — **billing pendiente, acción del usuario, no corregible por
+código**. Efecto en producción: `computePlan` (§C-26) llevaba fallando en silencio hacia el
+degradado determinista (`daily_plan.ai_unavailable`) cada vez que había tareas sin hora que
+encajar, cobrando y reembolsando el crédito sin que nada se le ofreciera realmente al usuario.
+
+Fix: modelos actualizados a los vigentes (tabla arriba). Los modelos GPT-OSS son de
+**razonamiento** — gastan tokens de `completion` pensando antes de escribir la respuesta; con
+`max_tokens` normal, `content` puede volver vacío (`finish_reason: "length"`) aunque el HTTP
+sea 200. `openAICompatibleChat` (`packages/core/src/ai/providers/shared.ts`) gana un parámetro
+opcional `reasoningEffort`; `dispatchGroq` lo pasa siempre en `'low'`. De paso, el error que
+lanza `openAICompatibleChat` ante un HTTP no-ok ahora incluye el cuerpo de la respuesta (antes
+solo el status code) — mismo principio anti-degradación-silenciosa de D-18/D-19/D-22, para que
+un futuro cambio de modelo/cuenta no vuelva a tardar meses en detectarse.
 
 ### C-10.7. Degradación (resumen; detalle §C-14.3)
 
@@ -2422,6 +2445,22 @@ usuario (`createEvent`, `GOOGLE_CALENDAR_SCOPE` pasa de `calendar.readonly` a
 `111_blocks_calendar_event_id.sql`) para no duplicar eventos en replanificaciones. Ajustes
 muestra un aviso de reconexión cuando el interruptor está activo pero la cuenta todavía tiene
 el scope viejo de solo-lectura.
+
+### D-27. Modelos de texto de Groq/Cerebras descontinuados en la cuenta real: `daily_briefing` degradaba en silencio (§C-10.6)
+
+Reportado por el usuario: "no me está dando otra actividad" tras mandar "comenzar" con hueco
+libre real y 101 tareas pendientes. Confirmado en vivo (`GET /v1/models` contra cada cuenta):
+`llama-3.3-70b-versatile` (Groq) y `llama3.1-70b` (Cerebras) — los modelos configurados desde
+siempre — ya no existen en ninguna de las dos cuentas, ambos 404 `model_not_found`. Nunca se
+había detectado porque `daily_briefing` no había tenido tareas reales que ofrecerle a la IA
+hasta D-22 (Google Tasks habilitado) — el camino feliz nunca se había ejercitado en producción.
+Modelos actualizados a los vigentes de cada cuenta (`openai/gpt-oss-20b` / `gemma-4-31b`);
+los GPT-OSS son de razonamiento, así que `openAICompatibleChat` gana `reasoningEffort` (Groq
+siempre `'low'`) para que no gasten el budget de `max_tokens` pensando y devuelvan `content`
+vacío. El error ante un HTTP no-ok ahora arrastra el cuerpo de la respuesta, no solo el status
+— mismo principio de D-18/D-19/D-22, para no volver a tardar meses en detectar esto. Cerebras
+además tiene 402 `payment_required` en la cuenta real — fuera de alcance de un fix de código,
+pendiente de que el usuario reactive el billing.
 
 ---
 

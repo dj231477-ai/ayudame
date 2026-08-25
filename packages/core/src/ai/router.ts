@@ -39,11 +39,14 @@ export async function getAIProvider(modality: AIModality): Promise<AIProvider> {
   }
   // Texto: rotación por cuota diaria (sin ruta especial para el fundador — Ollama, que la
   // servía, quedó descartado por latencia, D-9).
+  // D-27: 'llama-3.3-70b-versatile'/'llama3.1-70b' ya no existen en las cuentas reales de
+  // Groq/Cerebras (ambas devolvían 404 model_not_found — confirmado en vivo, agosto 2026).
+  // Modelos vigentes según /v1/models de cada cuenta.
   if ((await getDailyUsage('groq')) < TEXT_GROQ_LIMIT) {
-    return { provider: 'groq', model: 'llama-3.3-70b-versatile' };
+    return { provider: 'groq', model: 'openai/gpt-oss-20b' };
   }
   if ((await getDailyUsage('cerebras')) < TEXT_CEREBRAS_TOKEN_LIMIT) {
-    return { provider: 'cerebras', model: 'llama3.1-70b' };
+    return { provider: 'cerebras', model: 'gemma-4-31b' };
   }
   // Groq y Cerebras agotados el mismo día: sin Ollama no queda alternativa gratuita (D-9).
   // Con el flag de pago activo, MiniMax M3 sirve también texto; si no, degradación explícita.

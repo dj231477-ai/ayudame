@@ -36,6 +36,10 @@ export async function openAICompatibleChat(opts: {
   prompt: string;
   maxTokens?: number;
   imageUrl?: string;
+  /** D-27, §C-10.6: modelos de razonamiento (ej. gpt-oss) gastan tokens de `completion` en
+   * pensar antes de responder — sin esto, `max_tokens` bajo corta antes de que `content`
+   * llegue a escribirse, devolviendo texto vacío aunque la respuesta HTTP sea 200 OK. */
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }): Promise<AIResponse> {
   const content = opts.imageUrl
     ? [
@@ -52,9 +56,13 @@ export async function openAICompatibleChat(opts: {
       messages: [{ role: 'user', content }],
       max_tokens: opts.maxTokens ?? 1024,
       temperature: 0.2,
+      ...(opts.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
     }),
   });
-  if (!res.ok) throw new Error(`${opts.provider}_http_${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`${opts.provider}_http_${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`);
+  }
   const json = (await res.json()) as OpenAIChatResponse;
   const text = json.choices?.[0]?.message?.content ?? '';
   const tokens = json.usage?.total_tokens ?? estimateTokens(opts.prompt + text);
