@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.11 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.12 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -29,6 +29,8 @@
 > **Cambios en 2.1.10 (agosto 2026).** Primera prueba real con Playwright contra el flujo de dos fotos (D-10) — no unitaria, contra la cuenta real en producción — expuso dos bugs de infraestructura que ningún test unitario podía atrapar, ambos de *drift* entre lo committeado y lo realmente vivo en Supabase (mismo patrón que el backfill de `106_reorg_cache.sql`, §C-25 nota histórica): **D-18** (§C-7.2): el CHECK constraint `blocks_status_check` en producción nunca incluyó `'awaiting_start_photo'` — cualquier intento de esa transición fallaba en el servidor con 500 (o en silencio, en las llamadas que no revisan el error de la escritura), desde que D-10 introdujo el estado. **D-19** (§C-7.2): el trigger `trg_blocks_touch` (`updated_at` automático) nunca existió en producción — `blocks.updated_at` jamás se actualizaba en ningún UPDATE, rompiendo todo lo que depende de la edad del bloque (auto-skip de `PHOTO_WINDOW_MIN`, recordatorios, "posponer"). Ambos corregidos en vivo vía MCP y respaldados con migraciones `109`/`110`.
 >
 > **Cambios en 2.1.11 (agosto 2026).** Reportado por el usuario contra la cuenta real: mandar la foto de cierre de un bloque `active` (antes de su `end_time`) devolvía "no tienes ningún bloque esperando foto". **D-20** (§C-13.10): `handlePhoto` solo buscaba candidatos en `awaiting_start_photo`/`awaiting_photo` — por WhatsApp no existe el botón "Terminar" de la PWA que hace la transición `active→awaiting_photo` antes de pedir la foto, así que no había ninguna acción que la disparara. Fix: `handlePhoto` también acepta la foto de cierre en `active` (`verifyPhoto()` ya no exigía el paso intermedio). **D-21** (§C-13.5f): nuevo comando `lista`/`listar`/`tareas`/`mis tareas` — muestra todos los bloques de hoy con su estado en un solo mensaje, a diferencia de "¿qué sigue?" que solo muestra el ítem actual/siguiente.
+>
+> **Cambios en 2.1.12 (agosto 2026).** El usuario pidió que las tareas de hoy tuvieran fecha/hora asignada según los huecos libres de su Calendar. Investigando por qué el plan diario nunca traía ninguna tarea (solo eventos de Calendar), se encontró **D-22** (§C-26): la Google Tasks API nunca se había habilitado en el proyecto de Google Cloud del OAuth client — `listTasks()` llevaba devolviendo `[]` en silencio desde siempre (mismo patrón de degradación silenciosa que D-18/D-19), pese a que el scope sí estaba concedido. Corregido por el usuario habilitando la API; se deja logging permanente para que una falla así nunca vuelva a pasar inadvertida. Con `listTasks()` ya funcionando, dos ajustes más (§C-26.7): **D-23**, `computePlan` ahora solo ofrece a la IA las tareas con `due <= hoy` (vencidas o que vencen hoy) en vez de todo el backlog de todas las listas del usuario (40+ tareas reales, la mayoría sin relación con hoy); **D-24**, cada tarea que la IA encaja hoy recibe `due = hoy` de vuelta en Google Tasks (`scheduleTask`) — verificado contra la documentación oficial y contra la cuenta real que la API de Google Tasks **solo admite fecha, nunca hora**, en el campo `due` (límite de Google, no de FlowDay); la hora exacta sigue viviendo solo en `blocks`/WhatsApp.
 
 ---
 
@@ -2352,6 +2354,42 @@ usuario pidió también poder ver el día completo de un vistazo sin abrir la ap
 hora, cada uno con su estado (⏳ pendiente, 📷 esperando foto de inicio/cierre, ▶ en curso,
 ✓ verificado, ✗ saltado). Solo lectura — no cambia ningún estado.
 
+### D-22. Google Tasks API nunca se habilitó en el proyecto de Google Cloud: `listTasks()` devolvía siempre cero tareas (§C-26)
+
+El usuario pidió que el planificador asignara fecha/hora a sus tareas de hoy; al investigar por
+qué el plan del día solo traía eventos de Calendar y ninguna tarea, se agregó logging temporal
+(`google_tasks.list_lists_failed` etc., `apps/flowday/lib/google/tasks.ts`) y se probó en vivo
+contra la cuenta real (`GET /api/v1/tasks`, `scripts/debug-list-tasks.mjs`, sesión real). La API
+de Google respondió 403: *"Google Tasks API has not been used in project 459897788500 before or
+it is disabled."* El scope OAuth (`tasks`) sí estaba concedido — la propia API nunca se había
+habilitado en el proyecto de Google Cloud, algo que ni el código ni un test unitario podían
+detectar (Calendar sí funcionaba porque esa API sí estaba habilitada). `listTaskLists`/
+`listTasks` devolvían `[]` en silencio ante cualquier respuesta no-ok, mismo patrón de
+degradación silenciosa que D-18/D-19 — se deja el logging como permanente, no solo de
+diagnóstico. Corregido por el usuario habilitando la API en Google Cloud Console; confirmado
+en vivo que `listTasks()` ya trae las tareas reales.
+
+### D-23. Filtro de elegibilidad: solo tareas vencidas hoy o antes, no todo el backlog (§C-26.7)
+
+Con `listTasks()` ya funcionando (D-22), se vio que el usuario tiene 40+ tareas repartidas en
+varias listas, la mayoría sin relación con "hoy" (sin `due`, o con `due` de meses atrás o de
+mañana en adelante). `computePlan` antes ofrecía TODAS las tareas no completadas a la IA sin
+filtrar por fecha — pedido explícito del usuario ("las tareas que se realizarán el día de hoy").
+Fix (§C-26.7): solo entran al encaje de la IA las tareas con `due` establecido y `due <= hoy`
+(vencidas o que vencen hoy); las demás se quedan en su backlog sin tocar.
+
+### D-24. Escribir la fecha asignada de vuelta en Google Tasks — límite real: sin hora (§C-26.7)
+
+Pedido explícito del usuario: que las tareas encajadas hoy queden reflejadas también en Google
+Tasks, no solo dentro de FlowDay. Verificado contra la documentación oficial de la API de
+Google Tasks antes de construir nada: *"the due date only records date information; the time
+portion... is discarded... it isn't possible to read or write the time via the API"* — límite
+real de Google, no una decisión de FlowDay, confirmado además contra los datos reales de la
+cuenta (todo `due` vuelve como medianoche UTC). Se implementa `scheduleTask()`
+(`apps/flowday/lib/google/tasks.ts`) que escribe `due = hoy` (sin hora) en cada tarea que la IA
+encaja en el plan del día, best-effort, sin bloquear la planificación si falla. La hora exacta
+sigue viviendo solo en `blocks`/WhatsApp.
+
 ---
 
 ## C-26. Auto-organización de Calendar/Tasks (Pro+)
@@ -2415,6 +2453,27 @@ Cuando el usuario edita manualmente tareas/eventos/bloques, **no** se dispara IA
 - Un día sin cambios en tasks/events **no** consume créditos de reorganización (cache hit por hash).
 - Un evento de Calendar con hora exacta aparece como bloque sin haber invocado IA.
 - La reorganización diaria ocurre dentro del flujo de `morning-briefing`, sin cron adicional.
+
+### C-26.7. Filtro de tareas elegibles + escritura de fecha en Google Tasks (D-23/D-24) [NORMATIVO]
+
+- **Filtro de elegibilidad (D-23):** solo se ofrecen a la IA (§C-26.1, `computePlan`) las
+  tareas de Google Tasks con `due` establecido y `due <= hoy` (vencidas o que vencen hoy,
+  comparando el prefijo de fecha `YYYY-MM-DD` de `due`, nunca convirtiendo con `Date`+tz —
+  `due` de Google Tasks es siempre medianoche UTC, §C-26.7 nota técnica). Una tarea sin `due`,
+  o con `due` en el futuro, se queda en su backlog y no se le ofrece a la IA — un usuario real
+  puede tener docenas de tareas repartidas en varias listas sin relación con el día de hoy
+  (confirmado contra la cuenta real: 40+ tareas pendientes, la mayoría sin `due` o con `due`
+  de meses atrás/futuro).
+- **Escritura de fecha (D-24):** cada tarea que la IA encaja en un bloque de hoy recibe
+  `due = hoy` de vuelta en Google Tasks (`scheduleTask`, `apps/flowday/lib/google/tasks.ts`),
+  best-effort — un fallo no bloquea la planificación, solo se registra
+  (`daily_plan.schedule_task_failed`). **Nota técnica, límite real de la API de Google, no de
+  FlowDay:** el campo `due` de la Google Tasks API **solo admite fecha, nunca hora** — la
+  documentación oficial de Google lo dice explícito ("the time portion of the timestamp is
+  discarded... it isn't possible to read or write the time that a task is due via the API"),
+  confirmado además contra la cuenta real (todo `due` leído vuelve como medianoche UTC). La
+  hora exacta de cada bloque sigue viviendo únicamente en `blocks`/WhatsApp (§C-13.10) — nunca
+  se intenta escribir en Google Tasks, sería descartado silenciosamente por Google.
 
 ---
 

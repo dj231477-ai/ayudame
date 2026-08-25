@@ -71,21 +71,46 @@ export async function listTasks(userId: string): Promise<GoogleTask[]> {
   return flat;
 }
 
+function splitCompositeId(compositeId: string): { listId: string; taskId: string } | null {
+  const sep = compositeId.indexOf(':');
+  if (sep < 0) return null; // formato inesperado (id sin lista, de antes de D-14)
+  return { listId: compositeId.slice(0, sep), taskId: compositeId.slice(sep + 1) };
+}
+
 export async function completeTask(userId: string, compositeId: string): Promise<boolean> {
   const token = await getValidAccessToken(userId);
   if (!token) return false;
-
-  const sep = compositeId.indexOf(':');
-  if (sep < 0) return false; // formato inesperado (id sin lista, de antes de D-14)
-  const listId = compositeId.slice(0, sep);
-  const taskId = compositeId.slice(sep + 1);
+  const ids = splitCompositeId(compositeId);
+  if (!ids) return false;
 
   const res = await fetch(
-    `${TASKS_API}/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,
+    `${TASKS_API}/lists/${encodeURIComponent(ids.listId)}/tasks/${encodeURIComponent(ids.taskId)}`,
     {
       method: 'PATCH',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ status: 'completed' }),
+    },
+  );
+  return res.ok;
+}
+
+/**
+ * D-24, §C-26.7: escribe la fecha (SOLO fecha, la API de Google Tasks descarta la hora tanto
+ * al leer como al escribir `due` — confirmado contra la doc oficial y contra la cuenta real,
+ * todo `due` vuelve como medianoche UTC) de una tarea que el planificador acaba de encajar hoy.
+ */
+export async function scheduleTask(userId: string, compositeId: string, dateStr: string): Promise<boolean> {
+  const token = await getValidAccessToken(userId);
+  if (!token) return false;
+  const ids = splitCompositeId(compositeId);
+  if (!ids) return false;
+
+  const res = await fetch(
+    `${TASKS_API}/lists/${encodeURIComponent(ids.listId)}/tasks/${encodeURIComponent(ids.taskId)}`,
+    {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ due: `${dateStr}T00:00:00.000Z` }),
     },
   );
   return res.ok;

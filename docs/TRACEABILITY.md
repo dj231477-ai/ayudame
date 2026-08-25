@@ -331,3 +331,18 @@ porque `listTasks()` solo miraba la lista `@default`.
 |---|---|
 | D-20: `handlePhoto` acepta la foto de cierre también en `active` (equivalente al botón "Terminar" de la PWA, que WhatsApp no tiene) | `apps/flowday/app/internal/whatsapp-inbound/route.ts` |
 | D-21: comando "lista"/"listar"/"tareas" — todos los bloques de hoy con su estado en un mensaje | `apps/flowday/app/internal/whatsapp-inbound/route.ts` (`LIST_TASKS_COMMAND`, `handleListTasks`) |
+
+## Fase 17 — Google Tasks API nunca habilitada + filtro de vencimiento + fecha de vuelta a Tasks (D-22/D-23/D-24)
+
+> El usuario pidió que las tareas de hoy tuvieran fecha/hora según los huecos libres de su
+> Calendar. `GET /api/v1/tasks` contra la cuenta real devolvía `{"tasks":[]}` pese a tener 40+
+> tareas reales — se agregó logging temporal y se confirmó un 403 de Google: la Tasks API nunca
+> se había habilitado en el proyecto de Google Cloud (Calendar sí). El usuario la habilitó y se
+> confirmó en vivo que `listTasks()` ya trae las tareas reales.
+
+| Requisito | Archivo |
+|---|---|
+| D-22: logging permanente en `listTaskLists`/`listTasks` (antes silenciaba cualquier fetch no-ok) | `apps/flowday/lib/google/tasks.ts` |
+| Script de diagnóstico real (`GET /api/v1/tasks` con la sesión real) | `apps/flowday/scripts/debug-list-tasks.mjs` (no versionado) |
+| D-23: `computePlan` solo ofrece a la IA tareas con `due <= hoy`, no todo el backlog | `apps/flowday/lib/planning/daily-plan.ts` |
+| D-24: `scheduleTask()` — escribe `due = hoy` (sin hora, límite real de la API de Google) en cada tarea que la IA encaja hoy | `apps/flowday/lib/google/tasks.ts`, `apps/flowday/lib/planning/daily-plan.ts` (`scheduleTasksToday`) |

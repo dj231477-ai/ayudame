@@ -6,7 +6,7 @@ import type { BlockType, Json } from '@flowday/core/supabase/types';
 import { createServiceClient } from '@/lib/supabase/service';
 import { localDayRangeUtc, localTimeHHMM } from '@/lib/datetime';
 import { listUpcomingEvents } from '@/lib/google/calendar';
-import { listTasks } from '@/lib/google/tasks';
+import { listTasks, scheduleTask } from '@/lib/google/tasks';
 import { buildPlanPrompt, parsePlanResponse, hasRoomToday, type FixedBlockInput } from './plan-prompt';
 
 // =============================================================================
@@ -98,7 +98,7 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
   if (cached && cached.source_hash === sourceHash) {
     plan = cached.plan as unknown as DailyPlanBlock[];
   } else {
-    plan = await computePlan(userId, tz, events, tasks);
+    plan = await computePlan(userId, dateStr, tz, events, tasks);
     await svc.from('reorg_cache').upsert({
       user_id: userId,
       date: dateStr,
@@ -135,6 +135,7 @@ export async function getOrComputeDailyPlan(userId: string, dateStr: string): Pr
 /** §C-26.2: eventos con hora exacta → bloques directos, sin IA. §C-26.1: IA solo para el resto. */
 async function computePlan(
   userId: string,
+  dateStr: string,
   tz: string,
   events: Awaited<ReturnType<typeof listUpcomingEvents>>,
   tasks: Awaited<ReturnType<typeof listTasks>>,
@@ -150,7 +151,13 @@ async function computePlan(
     });
   }
 
-  const pendingTasks = tasks.filter((t) => t.status !== 'completed');
+  // D-23, §C-26.2c: solo se ofrecen a la IA las tareas vencidas hoy o antes — no todo el
+  // backlog de todas las listas (un usuario real puede tener decenas sin relación con hoy).
+  // `due` de Google Tasks solo trae fecha (siempre medianoche UTC, confirmado D-24): comparar
+  // el prefijo de fecha evita cualquier desfase de zona horaria al convertir con `Date`.
+  const pendingTasks = tasks.filter(
+    (t) => t.status !== 'completed' && !!t.due && t.due.slice(0, 10) <= dateStr,
+  );
   const nowHHMM = localTimeHHMM(new Date(), tz);
   if (pendingTasks.length === 0 || !hasRoomToday(nowHHMM)) {
     // Nada que encajar con IA (sin tareas, o ya no queda margen hoy — D-14, §C-26.2b):
@@ -178,10 +185,31 @@ async function computePlan(
       type: p.type,
       task_id: p.task_id,
     }));
+    await scheduleTasksToday(userId, dateStr, aiBlocks);
     return [...fixed, ...aiBlocks].sort((a, b) => a.start_time.localeCompare(b.start_time));
   } catch {
     // Degradación explícita (§C-14.3): sin IA disponible, se sirve solo lo determinista.
     logger.warn({ event: 'daily_plan.ai_unavailable', user_id: userId, error: { code: 'internal' } });
     return fixed.sort((a, b) => a.start_time.localeCompare(b.start_time));
   }
+}
+
+/**
+ * D-24, §C-26.7: al encajar una tarea en el día de hoy, se escribe `due=hoy` en Google Tasks
+ * (solo fecha — la API descarta la hora, §C-13.10/§C-26.7). Best-effort: un fallo aquí nunca
+ * bloquea la planificación, solo se registra (mismo patrón que completeTask en verifyPhoto).
+ */
+async function scheduleTasksToday(userId: string, dateStr: string, aiBlocks: DailyPlanBlock[]): Promise<void> {
+  await Promise.all(
+    aiBlocks
+      .filter((b): b is DailyPlanBlock & { task_id: string } => !!b.task_id)
+      .map(async (b) => {
+        try {
+          const ok = await scheduleTask(userId, b.task_id, dateStr);
+          if (!ok) logger.warn({ event: 'daily_plan.schedule_task_failed', user_id: userId, task_id: b.task_id });
+        } catch {
+          logger.warn({ event: 'daily_plan.schedule_task_failed', user_id: userId, task_id: b.task_id });
+        }
+      }),
+  );
 }
