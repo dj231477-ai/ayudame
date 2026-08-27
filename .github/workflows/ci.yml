@@ -82,9 +82,9 @@ jobs:
         run: |
           supabase status -o env > /tmp/sb.env
           {
-            echo "SUPABASE_TEST_URL=$(grep -E '^API_URL=' /tmp/sb.env | cut -d'\"' -f2)"
-            echo "SUPABASE_TEST_ANON_KEY=$(grep -E '^ANON_KEY=' /tmp/sb.env | cut -d'\"' -f2)"
-            echo "SUPABASE_TEST_SERVICE_ROLE_KEY=$(grep -E '^SERVICE_ROLE_KEY=' /tmp/sb.env | cut -d'\"' -f2)"
+            echo "SUPABASE_TEST_URL=$(grep -E '^API_URL=' /tmp/sb.env | cut -d'"' -f2)"
+            echo "SUPABASE_TEST_ANON_KEY=$(grep -E '^ANON_KEY=' /tmp/sb.env | cut -d'"' -f2)"
+            echo "SUPABASE_TEST_SERVICE_ROLE_KEY=$(grep -E '^SERVICE_ROLE_KEY=' /tmp/sb.env | cut -d'"' -f2)"
           } >> "$GITHUB_ENV"
           DATABASE_URL="$(grep -E '^DB_URL=' /tmp/sb.env | cut -d'"' -f2)" \
             bash packages/db/scripts/apply-migrations.sh
