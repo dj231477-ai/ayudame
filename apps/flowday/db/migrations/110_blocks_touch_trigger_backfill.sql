@@ -7,6 +7,11 @@
 -- §C-13.5d). Mismo patrón de drift que el backfill de 106_reorg_cache.sql: el archivo estaba
 -- committeado, pero la operación real nunca se ejecutó contra la base de datos de producción.
 -- Recrea exactamente lo que 100_blocks.sql ya especificaba.
+--
+-- Idempotencia (2026-08-27): el `create trigger` era incondicional y fallaba con "trigger already
+-- exists" en cualquier instalación desde cero, porque 100_blocks.sql:42 ya lo crea. En producción
+-- el trigger no existía (de ahí este backfill), así que allí el `drop ... if exists` es un no-op y
+-- el resultado no cambia.
 -- =============================================================================
 
 create or replace function touch_blocks_updated_at()
@@ -16,6 +21,7 @@ begin
   return new;
 end $$;
 
+drop trigger if exists trg_blocks_touch on blocks;
 create trigger trg_blocks_touch
   before update on blocks
   for each row execute function touch_blocks_updated_at();
