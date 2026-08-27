@@ -155,14 +155,24 @@ async function computePlan(
   tasks: Awaited<ReturnType<typeof listTasks>>,
 ): Promise<DailyPlanBlock[]> {
   const fixed: DailyPlanBlock[] = [];
+  let allDaySkipped = 0;
   for (const e of events) {
-    if (!e.start || !e.end || !e.start.includes('T') || !e.end.includes('T')) continue; // all-day: sin hora exacta.
+    if (!e.start || !e.end || !e.start.includes('T') || !e.end.includes('T')) {
+      // all-day: sin hora exacta, no se puede convertir en bloque. Se cuenta y se registra en
+      // vez de descartarlo en silencio (mismo criterio que D-22: una degradación que no deja
+      // rastro tarda meses en detectarse).
+      allDaySkipped++;
+      continue;
+    }
     fixed.push({
       label: e.summary,
       start_time: localTimeHHMM(new Date(e.start), tz),
       end_time: localTimeHHMM(new Date(e.end), tz),
       type: 'admin',
     });
+  }
+  if (allDaySkipped > 0) {
+    logger.info({ event: 'plan.all_day_events_skipped', user_id: userId, count: allDaySkipped });
   }
 
   // D-23, §C-26.2c: solo se ofrecen a la IA las tareas vencidas hoy o antes — no todo el
@@ -203,7 +213,10 @@ async function computePlan(
       system: buildPlanPrompt(fixedInput, nowHHMM),
       userData: JSON.stringify(pendingTasks.map((t) => ({ id: t.id, title: t.title }))),
     });
-    const planned = parsePlanResponse(ai.text, nowHHMM);
+    // §C-26.2: además de `nowHHMM` (D-14), se descartan los bloques que la IA haya propuesto
+    // pisando un evento fijo del Calendar o pisándose entre sí — abajo se materializan en
+    // `blocks`, así que un solape aceptado se convierte en una fila real sobre una reunión.
+    const planned = parsePlanResponse(ai.text, nowHHMM, fixedInput);
     // D-25: defensa en profundidad — pendingTasks ya viene acotado a maxDailyTasks, pero si el
     // modelo no siguiera la instrucción y devolviera más, el tope se aplica igual aquí.
     let aiBlocks: DailyPlanBlock[] = planned.slice(0, maxDailyTasks).map((p) => ({

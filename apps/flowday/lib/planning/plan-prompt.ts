@@ -1,3 +1,5 @@
+import { dropOverlapping } from './gaps';
+
 // Funciones puras de planificación (sin 'server-only'): testeables en aislamiento.
 // SPEC §C-26.1: la IA es el último recurso, solo para encajar tareas SIN hora en los huecos
 // libres que dejan los bloques fijos (eventos con hora exacta, que se resuelven sin IA en
@@ -59,8 +61,15 @@ const TIME_RE = /^\d{2}:\d{2}$/;
  * Parseo tolerante del JSON del modelo (acepta fences ```json), descarta filas inválidas.
  * `earliestStart` (D-14, defensa en profundidad): descarta también bloques que el modelo haya
  * propuesto antes de esa hora, en caso de que no haya seguido la instrucción del prompt.
+ * `fixedBlocks` (§C-26.2, defensa en profundidad): si se pasa, descarta además los bloques que
+ * se solapen con los fijos o entre sí. El prompt ya lo pide, pero `computePlan` materializa
+ * esta salida en `blocks`, así que un solape aceptado pisaría una reunión real del usuario.
  */
-export function parsePlanResponse(text: string, earliestStart?: string): PlannedBlock[] {
+export function parsePlanResponse(
+  text: string,
+  earliestStart?: string,
+  fixedBlocks?: FixedBlockInput[],
+): PlannedBlock[] {
   const cleaned = text
     .trim()
     .replace(/^```(?:json)?/i, '')
@@ -69,7 +78,7 @@ export function parsePlanResponse(text: string, earliestStart?: string): Planned
   try {
     const obj = JSON.parse(cleaned) as { blocks?: unknown };
     if (!Array.isArray(obj.blocks)) return [];
-    return obj.blocks.filter((b): b is PlannedBlock => {
+    const wellFormed = obj.blocks.filter((b): b is PlannedBlock => {
       if (typeof b !== 'object' || b === null) return false;
       const r = b as Record<string, unknown>;
       const valid =
@@ -85,6 +94,7 @@ export function parsePlanResponse(text: string, earliestStart?: string): Planned
       if (earliestStart && (r.start_time as string) < earliestStart) return false;
       return true;
     });
+    return fixedBlocks ? dropOverlapping(wellFormed, fixedBlocks) : wellFormed;
   } catch {
     return [];
   }
