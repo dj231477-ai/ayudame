@@ -96,9 +96,13 @@ async function applyEvent(evt: z.infer<typeof EventBody>): Promise<void> {
 
   switch (evt.action) {
     case 'start_block':
-      if (canTransition(block.status, 'active')) {
-        await svc.from('blocks').update({ status: 'active' }).eq('id', block.id);
-        await pushToUser(evt.user_id, { title: 'Bloque iniciado', body: block.label, url: '/focus' });
+      // D-10, §C-13.2: `start_block` lleva a `awaiting_start_photo`, no a `active` — `active`
+      // solo se alcanza tras verificar la foto de inicio (§C-11.3, phase='start'). Apuntar a
+      // 'active' hacía que canTransition() fuera siempre false desde 'pending' y el evento
+      // quedara en no-op silencioso.
+      if (canTransition(block.status, 'awaiting_start_photo')) {
+        await svc.from('blocks').update({ status: 'awaiting_start_photo' }).eq('id', block.id);
+        await pushToUser(evt.user_id, { title: 'Hora de empezar', body: block.label, url: '/focus' });
       }
       break;
     case 'block_warning':
