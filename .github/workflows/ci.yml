@@ -1,11 +1,11 @@
-# Gate de CI antes de merge a main. SPEC §C-18.5.
+# Gate de CI antes de merge a master. SPEC §C-18.5.
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 jobs:
   quality-gate:
