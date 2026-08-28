@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { http, HttpResponse } from 'msw';
 import { createMockClient, type MockClient } from '../../tests/helpers/supabase-mock';
+import { server } from '../../tests/msw/server';
+import { googleTokenRefresh, OAUTH_TOKEN_URL } from '../../tests/msw/google';
 
 // SPEC §C-11.5, Fase 2 D-4: credenciales Google cifradas + refresco de access token.
-// crypto, fetch y Supabase mockeados (encrypt/decrypt = identidad en test).
+// crypto y Supabase mockeados (encrypt/decrypt = identidad en test); la red va por MSW (§C-18.4),
+// así que una petición no declarada rompe el test en vez de salir a internet.
 
 let mockClient: MockClient;
 vi.mock('@/lib/supabase/service', () => ({ createServiceClient: () => mockClient }));
@@ -10,18 +14,12 @@ vi.mock('@flowday/core/crypto', () => ({ encrypt: (s: string) => s, decrypt: (s:
 
 import { getValidAccessToken, isGoogleConnected, redirectUri, exchangeCode, storeTokens } from './tokens';
 
-const fetchMock = vi.fn();
-
 beforeEach(() => {
   mockClient = createMockClient();
   process.env.GOOGLE_CLIENT_ID = 'gid';
   process.env.GOOGLE_CLIENT_SECRET = 'gsecret';
   process.env.NEXT_PUBLIC_APP_URL = 'https://app.test';
-  vi.stubGlobal('fetch', fetchMock);
-  fetchMock.mockReset();
 });
-
-afterEach(() => vi.unstubAllGlobals());
 
 describe('redirectUri', () => {
   it('usa NEXT_PUBLIC_APP_URL + ruta de callback', () => {
@@ -40,8 +38,8 @@ describe('getValidAccessToken (§C-11.5)', () => {
     mockClient = createMockClient({
       tableResults: { google_tokens: { data: { refresh_token: 'rt', access_token: 'at-cache', expiry: future } } },
     });
+    // Sin handler de refresco declarado: si llamara a Google, MSW rompería el test.
     expect(await getValidAccessToken('u1')).toBe('at-cache');
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('refresca contra Google si el access_token expiró y persiste el nuevo', async () => {
@@ -49,7 +47,8 @@ describe('getValidAccessToken (§C-11.5)', () => {
     mockClient = createMockClient({
       tableResults: { google_tokens: { data: { refresh_token: 'rt', access_token: 'old', expiry: past } } },
     });
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({ access_token: 'at-new', expires_in: 3600 }) });
+    server.use(googleTokenRefresh({ access_token: 'at-new', expires_in: 3600 }));
+
     expect(await getValidAccessToken('u1')).toBe('at-new');
     expect(mockClient.log.find((l) => l.op === 'update' && l.table === 'google_tokens')).toBeDefined();
   });
@@ -59,7 +58,7 @@ describe('getValidAccessToken (§C-11.5)', () => {
     mockClient = createMockClient({
       tableResults: { google_tokens: { data: { refresh_token: 'rt', access_token: 'old', expiry: past } } },
     });
-    fetchMock.mockResolvedValue({ ok: false, status: 400 });
+    server.use(googleTokenRefresh({}, 400));
     expect(await getValidAccessToken('u1')).toBeNull();
   });
 });
@@ -75,14 +74,21 @@ describe('isGoogleConnected', () => {
 
 describe('exchangeCode / storeTokens', () => {
   it('exchangeCode intercambia el code por tokens', async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: () => Promise.resolve({ access_token: 'a', refresh_token: 'r', expires_in: 3600 }) });
+    let hit = false;
+    server.use(
+      http.post(OAUTH_TOKEN_URL, () => {
+        hit = true;
+        return HttpResponse.json({ access_token: 'a', refresh_token: 'r', expires_in: 3600 });
+      }),
+    );
+
     const tokens = await exchangeCode('the-code');
     expect(tokens.access_token).toBe('a');
-    expect(fetchMock.mock.calls[0]![0]).toContain('oauth2.googleapis.com/token');
+    expect(hit).toBe(true);
   });
 
   it('exchangeCode lanza si Google responde error', async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 401 });
+    server.use(googleTokenRefresh({}, 401));
     await expect(exchangeCode('bad')).rejects.toThrow(/google_token_exchange_401/);
   });
 
