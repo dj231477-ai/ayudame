@@ -6,5 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     globals: false,
+    // SPEC §C-18.4: MSW intercepta toda petición HTTP saliente; las no declaradas fallan.
+    setupFiles: ['./src/test-utils/msw/setup.ts'],
   },
 });

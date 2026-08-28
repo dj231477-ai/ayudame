@@ -16,5 +16,7 @@ export default defineConfig({
     include: ['tests/**/*.test.ts', 'lib/**/*.test.ts', 'app/**/*.test.ts'],
     globals: false,
     testTimeout: 30_000,
+    // SPEC §C-18.4: MSW intercepta toda petición HTTP saliente; las no declaradas fallan.
+    setupFiles: ['./tests/msw/setup.ts'],
   },
 });

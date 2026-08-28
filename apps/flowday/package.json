@@ -34,6 +34,7 @@
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
     "lighthouse": "^12.2.2",
+    "msw": "^2.15.0",
     "newman": "^6.2.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",

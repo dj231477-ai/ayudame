@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.16 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.17 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -39,6 +39,8 @@
 > **Cambios en 2.1.15 (agosto 2026).** Reportado por el usuario contra la cuenta real: "no me está dando otra actividad" — mandó "comenzar" con un hueco libre de 49 min antes de su próximo evento fijo y 101 tareas reales pendientes, y no le propuso nada. **D-27** (§C-10.6): confirmado en vivo que ni `llama-3.3-70b-versatile` (Groq) ni `llama3.1-70b` (Cerebras) existen ya en las cuentas reales — ambos 404 `model_not_found`, nunca antes ejercitado porque D-22 (Google Tasks) es lo que hizo que `daily_briefing` por fin tuviera tareas reales que ofrecerle a la IA. `computePlan` degradaba en silencio a "solo lo determinista" cada vez. Modelos actualizados a los vigentes (`openai/gpt-oss-20b` / `gemma-4-31b`); los modelos GPT-OSS son de razonamiento y necesitan `reasoning_effort:'low'` para no vaciar `content` con `max_tokens` normal — nuevo parámetro en `openAICompatibleChat`. El error de un HTTP no-ok ahora incluye el cuerpo de la respuesta, no solo el status. Cerebras además tiene la cuenta con 402 `payment_required` — pendiente de que el usuario reactive el billing, no corregible por código.
 >
 > **Cambios en 2.1.16 (agosto 2026).** Corrección de *drift* del propio documento, sin cambio de producto: tres bloques normativos seguían describiendo a Ollama como vivo pese a que D-9 (2.1.1) ordenó eliminarlo y el código ya lo había hecho. (1) `AIProviderName` (§C-10.2) listaba `'ollama'`; el código real (`packages/core/src/ai/types.ts`) tiene `'gemini' | 'groq' | 'cerebras' | 'minimax'`. (2) El árbol de ficheros (§C-5.4) mostraba `ollama.ts` como existente y `minimax.ts` como "(futuro)" — es al revés desde D-9. (3) El comentario del esquema de `usage_log` (§C-7.1) enumeraba `'ollama' | 'claude'` y hablaba de "0 para ollama"; ni uno ni otro existen, y faltaba `minimax`. Detectado al reconciliar la rama de tests con `origin/master`. Las Partes A y B y los registros de decisión fechados no se tocan: son contexto histórico. Nota: `usage_log.provider` es `text` sin CHECK (`002_usage_log.sql`), así que el drift no tenía consecuencia en runtime — era un problema de documentación, no de datos.
+>
+> **Cambios en 2.1.17 (agosto 2026).** Infraestructura de testing, sin cambio de producto. (1) **MSW** entra en §C-18.4 como herramienta de mockeo HTTP dentro de `npm run test` (no en §C-18.6, que es explícitamente lo que queda fuera del CI): FlowDay tiene 8 módulos que hablan por red con servicios externos y solo 4 tenían test a ese nivel — WhatsApp y los proveedores de IA no tenían ninguno — mientras los que sí lo tenían encadenaban `stubGlobal('fetch')` a mano, frágil en cuanto un módulo hace varias peticiones (`listTasks()` tras D-14). (2) §C-18.5 decía "antes de merge a `main`", pero la rama por defecto del repositorio es `master` y **no existe ninguna rama `main`**: `.github/workflows/ci.yml` copiaba literalmente ese `main` en sus triggers, así que el gate de CI no se ejecutó nunca — ni una sola vez — sobre ningún commit hasta que se corrigió el 2026-08-27. Es el mismo tipo de degradación silenciosa que D-18/D-19/D-22, pero en la propia infraestructura de verificación.
 
 ---
 
@@ -1915,9 +1917,11 @@ Componentes UI puros, helpers triviales, formato de fechas.
 
 Vitest para unidad/integración; utilidades de testing de React para componentes críticos; cliente Supabase mockeado para lógica, e instancia de prueba para tests de RLS.
 
+**MSW (Mock Service Worker)** para toda integración HTTP saliente (2.1.17). FlowDay habla por red con Google (tokens/tasks/calendar), WhatsApp Cloud API, los proveedores de IA y Resend: mockear `fetch` a mano por test es frágil y deja huecos — encadenar respuestas por orden de llamada se rompe en cuanto el módulo hace varias peticiones, como `listTasks()` tras D-14. Los handlers compartidos viven en `apps/flowday/tests/msw/` y `packages/core/src/test-utils/msw/`, se activan por test con `server.use(...)` y el servidor falla ante cualquier petición no declarada (`onUnhandledRequest: 'error'`), de modo que una llamada de red inesperada es un test rojo y no una llamada real. A diferencia de §C-18.6, MSW **sí** forma parte de `npm run test` y del gate de CI.
+
 ### C-18.5. Gate de CI [NORMATIVO]
 
-Antes de merge a `main`:
+Antes de merge a `master` (rama por defecto del repositorio; el workflow apuntaba a una rama `main` inexistente y por eso no se ejecutó nunca hasta 2026-08-27):
 1. `turbo run lint test build` en verde.
 2. **Verificación anti-secretos:** ningún bundle de cliente contiene `service_role` ni secretos (grep/regla de bundler) (INV-4, S1).
 3. Tests obligatorios (§C-18.2) presentes y verdes para PRs que toquen créditos, router IA, RLS o webhooks (R16).
