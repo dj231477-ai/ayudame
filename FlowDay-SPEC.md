@@ -4,7 +4,7 @@
 >
 > **Cómo leerlo.** Las Partes A y B (auditoría y mejoras) son el contexto de por qué el documento está como está. Las Partes C en adelante son la especificación ejecutable. Un agente que solo quiera construir puede saltar a la Parte C, pero debe respetar los **Invariantes del Sistema** (§C-2) y las **Reglas Obligatorias para Agentes** (§C-3) sin excepción.
 >
-> **Versión:** 2.1.15 · **Fecha:** Agosto 2026 · **Estado:** en producción.
+> **Versión:** 2.1.16 · **Fecha:** Agosto 2026 · **Estado:** en producción.
 >
 > **Cambios en 2.1 (sincronización con el código real).** (1) Router de visión: **siempre Gemini**, sin fallback a Claude; ruta del fundador a Ollama para texto; **MiniMax M3** como fallback de pago de visión a activar tras 50 usuarios (§C-10.3, §C-25 D-2). Se elimina Claude como proveedor (código muerto). (2) Infraestructura real: **Contabo VPS x86** en lugar de Oracle ARM A1; Ollama `qwen3:8b` en lugar de `mistral` (§C-16.2, §C-10.6). (3) Migraciones añadidas 011/012/104/105 (§C-5.2). (4) Nueva §C-25 "Decisiones de arquitectura" (Upstash, MiniMax, Resend, cifrado de tokens). (5) Nueva §C-26 "Auto-organización de Calendar/Tasks". Las Partes A y B son contexto histórico de la auditoría 2.0 y no se reescriben.
 >
@@ -37,6 +37,8 @@
 > **Cambios en 2.1.14 (agosto 2026).** El usuario pidió explícitamente lo que D-13 (2.1.5) había excluido a propósito: escribir eventos reales en Google Calendar. **D-26** (§C-26.7c): nuevo interruptor `profiles.auto_organize_tasks` (opt-in, default false, migración `016_auto_organize_tasks.sql`) — activo, hace que (1) las tareas sin `due` de Google Tasks también entren al encaje del planificador (respetando el tope de D-25) y (2) cada tarea encajada se cree como evento real en el Calendar primario del usuario (`createEvent`, `apps/flowday/lib/google/calendar.ts`), guardando su id en la nueva columna `blocks.calendar_event_id` (migración `111_blocks_calendar_event_id.sql`) para no duplicar en replanificaciones. Requiere el scope `calendar.events` (antes `calendar.readonly`, `GOOGLE_CALENDAR_SCOPE`) — una cuenta conectada antes de este cambio debe reconectar Google; Ajustes avisa con un enlace cuando el interruptor está activo pero falta el scope. Limitación conocida: el catch-up (D-15) no reagenda el evento de Calendar ya creado si mueve el bloque después. Apagar el interruptor no borra los eventos ya creados.
 >
 > **Cambios en 2.1.15 (agosto 2026).** Reportado por el usuario contra la cuenta real: "no me está dando otra actividad" — mandó "comenzar" con un hueco libre de 49 min antes de su próximo evento fijo y 101 tareas reales pendientes, y no le propuso nada. **D-27** (§C-10.6): confirmado en vivo que ni `llama-3.3-70b-versatile` (Groq) ni `llama3.1-70b` (Cerebras) existen ya en las cuentas reales — ambos 404 `model_not_found`, nunca antes ejercitado porque D-22 (Google Tasks) es lo que hizo que `daily_briefing` por fin tuviera tareas reales que ofrecerle a la IA. `computePlan` degradaba en silencio a "solo lo determinista" cada vez. Modelos actualizados a los vigentes (`openai/gpt-oss-20b` / `gemma-4-31b`); los modelos GPT-OSS son de razonamiento y necesitan `reasoning_effort:'low'` para no vaciar `content` con `max_tokens` normal — nuevo parámetro en `openAICompatibleChat`. El error de un HTTP no-ok ahora incluye el cuerpo de la respuesta, no solo el status. Cerebras además tiene la cuenta con 402 `payment_required` — pendiente de que el usuario reactive el billing, no corregible por código.
+>
+> **Cambios en 2.1.16 (agosto 2026).** Corrección de *drift* del propio documento, sin cambio de producto: tres bloques normativos seguían describiendo a Ollama como vivo pese a que D-9 (2.1.1) ordenó eliminarlo y el código ya lo había hecho. (1) `AIProviderName` (§C-10.2) listaba `'ollama'`; el código real (`packages/core/src/ai/types.ts`) tiene `'gemini' | 'groq' | 'cerebras' | 'minimax'`. (2) El árbol de ficheros (§C-5.4) mostraba `ollama.ts` como existente y `minimax.ts` como "(futuro)" — es al revés desde D-9. (3) El comentario del esquema de `usage_log` (§C-7.1) enumeraba `'ollama' | 'claude'` y hablaba de "0 para ollama"; ni uno ni otro existen, y faltaba `minimax`. Detectado al reconciliar la rama de tests con `origin/master`. Las Partes A y B y los registros de decisión fechados no se tocan: son contexto histórico. Nota: `usage_log.provider` es `text` sin CHECK (`002_usage_log.sql`), así que el drift no tenía consecuencia en runtime — era un problema de documentación, no de datos.
 
 ---
 
@@ -384,8 +386,8 @@ flowday-platform/
 │   │   │   │   ├── gemini.ts         # visión + texto
 │   │   │   │   ├── groq.ts           # texto
 │   │   │   │   ├── cerebras.ts       # texto
-│   │   │   │   └── ollama.ts         # texto (best-effort, qwen3:8b)
-│   │   │   │   # minimax.ts          # (futuro) fallback de pago de visión — se añade al activar D-2 (§C-25)
+│   │   │   │   └── minimax.ts        # respaldo de pago de visión Y texto, gateado por vision_paid_fallback_active (D-2/D-9)
+│   │   │   │   # ollama.ts           # eliminado (D-9): 8–12 tok/s en CPU, inaceptable incluso fuera de ruta crítica
 │   │   │   └── types.ts              # AIProvider, AIRequest, AIResponse
 │   │   ├── billing/
 │   │   │   └── stripe.ts             # cliente Stripe + helpers
@@ -578,9 +580,9 @@ create table usage_log (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references profiles(id) on delete cascade,
   action       text not null,            -- 'photo_verify' | 'chat_message' | 'daily_briefing' | 'weekly_analysis' | 'embedding'
-  provider     text not null,            -- 'gemini' | 'groq' | 'cerebras' | 'ollama' | 'claude'
+  provider     text not null,            -- 'gemini' | 'groq' | 'cerebras' | 'minimax'  (D-9: ollama eliminado; claude nunca se usó)
   model        text,
-  cost_real    numeric(12,6) not null,   -- lo que pagamos al proveedor (0 para ollama)
+  cost_real    numeric(12,6) not null,   -- lo que pagamos al proveedor (0 en los free tier: gemini/groq/cerebras)
   cost_charged numeric(12,6) not null,   -- lo que se descontó al usuario
   margin       numeric(6,4) not null,
   refunded     boolean not null default false,
@@ -1068,8 +1070,9 @@ El router vive en `@flowday/core/ai`. **n8n nunca elige proveedor**; cuando n8n 
 ```typescript
 // packages/core/ai/types.ts
 export type AIModality = 'vision' | 'text';
-// 'minimax' se añade al activar el fallback de pago de visión (D-2, §C-25); hoy el código vive con los 4 primeros.
-export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'ollama' | 'minimax';
+// D-9: 'ollama' eliminado del tipo junto con su provider. 'minimax' ya está en el código y en el
+// DISPATCH; solo se enruta a él cuando el flag vision_paid_fallback_active está activo (D-2, §C-25).
+export type AIProviderName = 'gemini' | 'groq' | 'cerebras' | 'minimax';
 export interface AIProvider { provider: AIProviderName; model: string; }
 export interface AIRequest {
   modality: AIModality;
