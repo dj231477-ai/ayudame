@@ -15,7 +15,8 @@
     "test:e2e:install": "playwright install --with-deps chromium",
     "test:e2e:fixture": "node e2e/generate-fixture.mjs",
     "test:e2e": "playwright test",
-    "test:lighthouse": "node scripts/run-lighthouse.mjs"
+    "test:lighthouse": "node scripts/run-lighthouse.mjs",
+    "inspect": "node scripts/inspect-page.mjs"
   },
   "dependencies": {
     "@flowday/core": "*",
