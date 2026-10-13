@@ -5,7 +5,7 @@
 
 ## Qué es
 
-El usuario organiza su día en **bloques de tiempo**; al terminar cada bloque la app exige una **foto de evidencia**; una **IA de visión** (Gemini primario, Claude fallback) verifica que la foto corresponde a la tarea; el resultado queda en un **historial inmutable**. Modelo **freemium híbrido**: plan (features) + créditos prepago (consumo de IA). Ver §C-1.
+El usuario organiza su día en **bloques de tiempo**; al terminar cada bloque la app exige una **foto de evidencia**; una **IA de visión** (siempre Gemini; MiniMax M3 como respaldo de pago tras activarlo, D-2) verifica que la foto corresponde a la tarea; el resultado queda en un **historial inmutable**. Modelo **freemium híbrido**: plan (features) + créditos prepago (consumo de IA). Ver §C-1.
 
 ## Arquitectura (monorepo Turborepo — §C-5)
 
@@ -25,7 +25,7 @@ apps/
 ## Stack (§C-6)
 
 Next.js 15 · TypeScript estricto · Tailwind · Supabase (Auth/DB/Storage) · Stripe · Web Push (VAPID) ·
-n8n self-hosted (Oracle Always Free) · Gemini/Groq/Cerebras/Ollama/Claude · Vitest.
+n8n self-hosted (Oracle Always Free) · Gemini/Groq/Cerebras/MiniMax (Claude y Ollama retirados: D-2, D-9) · Vitest.
 
 ## Requisitos
 
